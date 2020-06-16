@@ -1,5 +1,7 @@
 # PyMC3 HMM
 
+![Build Status](https://github.com/nccmedia/pymc3-hmm/workflows/PyMC3-HMM/badge.svg)
+
 Hidden Markov models implemented in PyMC3.
 
 # Installation
