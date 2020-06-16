@@ -1,78 +1,157 @@
 import numpy as np
 
+import theano
 import theano.tensor as tt
 
 import pymc3 as pm
 
+from copy import copy
+
 from theano.gof.op import get_test_value
 
+from pymc3.distributions.mixture import all_discrete, _conversion_map
 from pymc3.distributions.distribution import draw_values, _DrawValuesContext
 
 
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[np.int], signature="(n),()->()")
 
 
-class Mixture(pm.Mixture):
-    """A version of PyMC3's `Mixture` that uses log-scale mixture probabilities."""
-
-    def __init__(self, logw, comp_dists, *args, **kwargs):
-        self.logw = logw
-        self.w = tt.exp(logw)
-        super().__init__(self.w, comp_dists, *args, **kwargs)
-
-    def logp(self, value):
-        logw = self.logw
-        loglik = pm.math.logsumexp(logw + self._comp_logp(value), axis=-1)
-        # return bound(loglik,
-        #              logw >= -np.inf, logw <= 0,
-        #              tt.allclose(logsumexp(logw, axis=-1), 0.0),
-        #              broadcast_conditions=False)
-        return loglik
+def broadcast_to(x, shape):
+    if isinstance(x, np.ndarray):
+        return np.broadcast_to(x, shape)  # pragma: no cover
+    else:
+        return x * tt.ones(shape)
 
 
-class PoissonZeroProcess(pm.Discrete):
-    """A Poisson-Dirac-delta (at zero) mixture process.
+# In general, these `*_subset_args` functions are such a terrible thing to
+# have to use, but the `Distribution` class simply cannot handle Theano
+# (yes, broadly speaking), so we need to hack around its shortcomings.
+def normal_subset_args(self, shape, idx):
+    return [
+        (broadcast_to(self.mu, shape))[idx],
+        (broadcast_to(self.sigma, shape))[idx],
+    ]
 
-    The first mixture component (at index 0) is the Dirac-delta at zero, and
-    the second mixture component is the Poisson random variable.
+
+pm.Normal.subset_args = normal_subset_args
+
+
+def poisson_subset_args(self, shape, idx):
+    return [(broadcast_to(self.mu, shape))[idx]]
+
+
+pm.Poisson.subset_args = poisson_subset_args
+
+
+def constant_subset_args(self, shape, idx):
+    return [(broadcast_to(self.c, shape))[idx]]
+
+
+pm.Constant.subset_args = constant_subset_args
+
+
+class SwitchingProcess(pm.Distribution):
+    """A distribution that models a switching process over arbitrary univariate mixtures and a state sequence.
+
+    This class is like `Mixture`, but without the mixture weights.
     """
 
-    def __init__(self, mu=None, states=None, **kwargs):
-        """Initialize a `PoissonZeroProcess` object.
+    def __init__(self, comp_dists, states, *args, **kwargs):
+        """Initialize a `SwitchingProcess` instance.
 
-        Parameters
-        ----------
-        mu: tensor
-            The Poisson rate(s)
-        states: tensor
-            A vector of integer 0-1 states that indicate which component of
-            the mixture is active at each point/time.
+        Each `Distribution` object in `comp_dists` must have a
+        `Distribution.random_subset` method that takes a list of indices and
+        returns a sample for only that subset.  Unfortunately, since PyMC3
+        doesn't provide such a method, you'll have to implement it yourself and
+        monkey patch a `Distribution` class.
+
+        Hint: use `types.MethodType` for patches to class instances.
+
         """
-        self.mu = tt.as_tensor_variable(pm.floatX(mu))
         self.states = tt.as_tensor_variable(states)
-        self.mode = tt.zeros(states.shape)
-        shape = kwargs.pop("shape", get_test_value(states).shape)
-        super().__init__(shape=shape, **kwargs)
+
+        assert self.states.squeeze().ndim < 2
+
+        states_tv = get_test_value(self.states)
+
+        bcast_comps = np.broadcast(
+            states_tv, *[d.sample() if hasattr(d, "sample") else d for d in comp_dists]
+        )
+
+        self.comp_dists = []
+        for dist in comp_dists:
+
+            assert hasattr(dist, "subset_args")
+
+            d = copy(dist)
+            d.shape = bcast_comps.shape
+
+            self.comp_dists.append(d)
+
+        # TODO: Not sure why we would allow users to set the shape if we're
+        # just going to compute it.
+        # shape = kwargs.pop("shape", bcast_comps.shape)
+        shape = bcast_comps.shape
+
+        defaults = kwargs.pop("defaults", [])
+
+        if all_discrete(comp_dists):
+            default_dtype = _conversion_map[theano.config.floatX]
+        else:
+            default_dtype = theano.config.floatX
+
+            try:
+                self.mean = tt.choose(
+                    self.states.squeeze(),
+                    [
+                        tt.cast(d.mean * tt.ones(d.shape).squeeze(), default_dtype)
+                        for d in self.comp_dists
+                    ],
+                )
+                self.mean = tt.reshape(self.mean, shape)
+
+                if "mean" not in defaults:
+                    defaults.append("mean")
+
+            except (AttributeError, ValueError, IndexError):  # pragma: no cover
+                pass
+
+        dtype = kwargs.pop("dtype", default_dtype)
+
+        try:
+            self.mode = tt.choose(
+                self.states.squeeze(),
+                [
+                    tt.cast(d.mode * tt.ones(d.shape).squeeze(), default_dtype)
+                    for d in self.comp_dists
+                ],
+            )
+            self.mode = tt.reshape(self.mode, shape)
+
+            if "mode" not in defaults:
+                defaults.append("mode")
+
+        except (AttributeError, ValueError, IndexError):  # pragma: no cover
+            pass
+
+        super().__init__(shape=shape, dtype=dtype, defaults=defaults, **kwargs)
 
     def logp(self, obs):
         """Return the scalar Theano log-likelihood at a point."""
 
-        mu = self.mu
+        obs_tt = tt.as_tensor_variable(obs)
 
-        nonzero_idx = tt.gt(self.states, 0.5)
-        # mu_nzo = mu[nonzero_idx]
-        # obs_nzo = obs[nonzero_idx]
-        #
-        # logp_val = pm.Constant.dist(0.0).logp(obs)
-        #
-        # # P(Y | Y > 0)
-        # # logp_val = obs_nzo * tt.log(mu_nzo) - mu_nzo - tt.log1p(-tt.exp(mu_nzo)) - factln(obs_nzo)
-        # # XXX: Can't use boolean `nonzero_idx`!
-        # logp_val = tt.set_subtensor(logp_val[np.arange(nonzero_idx)], pm.Poisson.dist(mu_nzo).logp(obs_nzo))
+        logp_val = tt.alloc(-np.inf, *obs.shape)
 
-        logp_val = tt.where(
-            nonzero_idx, pm.Poisson.dist(mu).logp(obs), pm.Constant.dist(0.0).logp(obs)
-        )
+        for i, dist in enumerate(self.comp_dists):
+            i_mask = tt.eq(self.states, i)
+            obs_i = obs_tt[i_mask]
+            i_idx = tt.unravel_index(
+                tt.arange(tt.mul(self.states.shape)[0])[i_mask.ravel()],
+                self.states.shape,
+            )
+            subset_dist = dist.dist(*dist.subset_args(obs.shape, i_idx))
+            logp_val = tt.set_subtensor(logp_val[i_idx], subset_dist.logp(obs_i))
 
         logp_val.name = "pois_zero_logp"
 
@@ -96,36 +175,63 @@ class PoissonZeroProcess(pm.Discrete):
         """
         with _DrawValuesContext() as draw_context:
 
-            terms = [self.mu, self.states]
+            # TODO FIXME: Very, very lame...
+            term_smpl = draw_context.drawn_vars.get((self.states, 1), None)
+            if term_smpl is not None:
+                point[self.states.name] = term_smpl
 
-            # TODO: It really seems like we shouldn't have to do this manually.
-            for t in terms:
-                # TODO FIXME: Very, very lame...
-                term_smpl = draw_context.drawn_vars.get((t, 1), None)
-                if term_smpl is not None:
-                    point[t.name] = term_smpl
-
-            mu, states = draw_values(terms, point=point)
-
-            mu = np.broadcast_to(mu, states.shape[0]).reshape(states.shape)
-            nonzero_idx = states > 0
-
-            nonzero_num = np.sum(nonzero_idx)
-
-            if not size or size == 1:
-                size_shape = ()
+            # `draw_values` is inconsistent and will not use the `size`
+            # parameter if the variables aren't random variables.
+            if hasattr(self.states, "distribution"):
+                (states,) = draw_values([self.states], point=point, size=size)
             else:
-                size_shape = tuple(np.atleast_1d(size or []))
+                states = pm.Constant.dist(self.states).random(point=point, size=size)
 
-            res = np.zeros(states.shape + size_shape, dtype=self.dtype)
+            states = states.T
 
-            if nonzero_num > 0:
-                pois_samples = pm.Poisson.dist(
-                    mu[nonzero_idx], shape=(nonzero_num,)
-                ).random(size=size)
-                res[nonzero_idx] = pois_samples.reshape((nonzero_num,) + size_shape)
+            samples = np.empty(states.shape)
 
-        return res
+            for i, dist in enumerate(self.comp_dists):
+                # We want to sample from only the parts of our component
+                # distributions that are active given the states.
+                # This is only really relevant when the component distributions
+                # change over the state space (e.g. Poisson means that change
+                # over time).
+                # We could always sample such components over the entire space
+                # (e.g. time), but, for spaces with large dimension, that would
+                # be extremely costly and wasteful.
+                i_idx = np.where(states == i)
+                i_size = len(i_idx[0])
+                if i_size > 0:
+                    subset_args = dist.subset_args(states.shape, i_idx)
+                    samples[i_idx] = dist.dist(*subset_args).random(point=point).T
+
+        # PyMC3 expects the dimension order size + shape
+        return samples.T
+
+
+class PoissonZeroProcess(SwitchingProcess):
+    """A Poisson-Dirac-delta (at zero) mixture process.
+
+    The first mixture component (at index 0) is the Dirac-delta at zero, and
+    the second mixture component is the Poisson random variable.
+    """
+
+    def __init__(self, mu=None, states=None, **kwargs):
+        """Initialize a `PoissonZeroProcess` object.
+
+        Parameters
+        ----------
+        mu: tensor
+            The Poisson rate(s)
+        states: tensor
+            A vector of integer 0-1 states that indicate which component of
+            the mixture is active at each point/time.
+        """
+        self.mu = tt.as_tensor_variable(pm.floatX(mu))
+        self.states = tt.as_tensor_variable(states)
+
+        super().__init__([pm.Constant.dist(0), pm.Poisson.dist(mu)], states, **kwargs)
 
 
 class HMMStateSeq(pm.Discrete):
@@ -193,43 +299,38 @@ class HMMStateSeq(pm.Discrete):
         -------
         array
         """
-        terms = [self.gamma_0, self.Gamma]
+        with _DrawValuesContext() as draw_context:
+            terms = [self.gamma_0, self.Gamma]
 
-        # with _DrawValuesContext() as draw_context:
-        #     for t in terms:
-        #         term_smpl = draw_context.drawn_vars.get((t, None), None)
-        #         if term_smpl is not None:
-        #             point[t.name] = term_smpl
+            # TODO: Would it be better to use `size` here instead?
+            gamma_0, Gamma = draw_values(terms, point=point)
 
-        gamma_0, Gamma = draw_values(terms, point=point)
+            N = self.N
 
-        N = self.N
+            state_n = pm.Categorical.dist(gamma_0).random(point=point, size=size).T
+            state_shape = state_n.shape
 
-        # size_shape = np.atleast_1d(size or [])
-        # gamma_0 = np.broadcast_to(gamma_0, tuple(size_shape) + gamma_0.shape)
+            states_shape = (N,) + state_shape
+            states = np.empty(states_shape, dtype=self.dtype)
+            states[0] = state_n
 
-        state_n = pm.Categorical.dist(gamma_0).random(size=size)
-        state_shape = state_n.shape
+            unif_samples = np.random.uniform(size=states_shape)
 
-        states_shape = (N,) + state_shape
-        states = np.empty(states_shape, dtype=self.dtype)
-        states[0] = state_n
-
-        unif_samples = np.random.uniform(size=states_shape)
-
-        if Gamma.ndim > 2:
-            Gamma_bcast = np.broadcast_to(Gamma, Gamma.shape[:2] + tuple(state_shape))
-
-        for n in range(1, N):
             if Gamma.ndim > 2:
-                gamma_t = np.asarray(
-                    [Gamma_bcast[i][state_n[i]] for i in np.ndindex(state_shape)]
+                Gamma_bcast = np.broadcast_to(
+                    Gamma, Gamma.shape[:2] + tuple(state_shape)
                 )
-            else:
-                gamma_t = Gamma[state_n, :]
 
-            state_n = vsearchsorted(gamma_t.cumsum(axis=-1), unif_samples[n])
-            # state_n = pm.Categorical.dist(gamma_t).random()
-            states[n] = state_n.reshape(state_shape)
+            for n in range(1, N):
+                if Gamma.ndim > 2:
+                    gamma_t = np.asarray(
+                        [Gamma_bcast[i][state_n[i]] for i in np.ndindex(state_shape)]
+                    )
+                else:
+                    gamma_t = Gamma[state_n, :]
 
-        return states
+                state_n = vsearchsorted(gamma_t.cumsum(axis=-1), unif_samples[n])
+                states[n] = state_n.reshape(state_shape)
+
+            # PyMC3 expects the dimension order size + shape
+            return states.T

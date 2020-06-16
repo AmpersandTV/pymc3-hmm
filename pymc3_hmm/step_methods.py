@@ -149,11 +149,7 @@ class TransMatConjugateStep(ArrayStep):
 
     def astep(self, point, inputs):
         states = inputs[self.hmm_states]
-        N_mat = compute_trans_freqs(states, point.shape[0], counts_only=True)
-
-        # res = [np.random.dirichlet(test_value(d.distribution.dist.a) + N_mat[i])
-        #        for i, d in enumerate(self.dists)]
-        # trans_res = [d.distribution.dist.transform.forward_val(r) for d, r in zip(self.dists, res)]
+        N_mat = compute_trans_freqs(states, len(self.dists), counts_only=True)
 
         trans_res = [
             d.distribution.dist.transform.forward_val(
