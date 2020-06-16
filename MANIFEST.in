@@ -1,0 +1,2 @@
+include versioneer.py
+include pymc3_hmm/_version.py
