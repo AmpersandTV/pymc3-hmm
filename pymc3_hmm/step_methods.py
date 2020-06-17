@@ -14,11 +14,15 @@ from pymc3_hmm.distributions import HMMStateSeq
 from pymc3_hmm.utils import compute_trans_freqs
 
 
-def ffbs_astep(gamma_0, Gamma, lik):
+big: np.float = 1e20
+small: np.float = 1.0 / big
+
+
+def ffbs_astep(gamma_0, Gamma, log_lik):
     # Number of observations
-    N: int = lik.shape[0]
+    N: int = log_lik.shape[0]
     # Number of states
-    M: int = lik.shape[1]
+    M: int = log_lik.shape[1]
 
     # Initial state probabilities
     gamma_0_normed: np.ndarray = gamma_0
@@ -30,14 +34,14 @@ def ffbs_astep(gamma_0, Gamma, lik):
     # Previous forward probability
     alpha_nm1: np.ndarray = gamma_0_normed
 
-    big: np.float = 1e20
-    small: np.float = 1.0 / big
-
     # Forward filtering
     for n in range(N):
-        alpha_n: np.ndarray = lik[n] * np.dot(Gamma, alpha_nm1)
+        log_lik_n = log_lik[n]
+        lik_n = np.exp(log_lik_n - log_lik_n.max())
+        alpha_n: np.ndarray = lik_n * np.dot(Gamma, alpha_nm1)
         alpha_n_sum = np.sum(alpha_n)
 
+        # Rescale small values
         if alpha_n_sum < small:
             alpha_n *= big
 
@@ -86,21 +90,22 @@ class FFBSStep(ArrayStep):
         ]
 
         # We can use this function to get log-likelihood values for each state.
-        dependents_lik = model.fn(
-            tt.exp(tt.add(*[v.logp_elemwiset for v in dependent_rvs]))
+        dependents_log_lik = model.fn(
+            tt.add(*[v.logp_elemwiset for v in dependent_rvs])
         )
 
         self.gamma_0_fn = model.fn(var.distribution.gamma_0)
         self.Gamma_fn = model.fn(var.distribution.Gamma)
 
-        super().__init__([var], [dependents_lik], allvars=True)
+        super().__init__([var], [dependents_log_lik], allvars=True)
 
-    def astep(self, point, lik_fn, inputs):
+    def astep(self, point, log_lik_fn, inputs):
         gamma_0 = self.gamma_0_fn(inputs)
         Gamma_t = self.Gamma_fn(inputs)
-        lik_t = np.stack([lik_fn(np.repeat(m, self.N)) for m in range(self.M)], 1)
+        log_lik_vals = [log_lik_fn(np.repeat(m, self.N)) for m in range(self.M)]
+        log_lik_t = np.stack(log_lik_vals, 1)
 
-        return ffbs_astep(gamma_0, Gamma_t, lik_t)
+        return ffbs_astep(gamma_0, Gamma_t, log_lik_t)
 
     @staticmethod
     def competence(var):

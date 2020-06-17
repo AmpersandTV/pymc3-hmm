@@ -1,4 +1,8 @@
-import theano
+import warnings
+
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+    import theano
 
 import pymc3
 
