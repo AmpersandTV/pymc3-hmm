@@ -1,66 +1,23 @@
 # %%
 from pymc3_hmm.distributions import HMMStateSeq, SwitchingProcess
-from tests.test_sampling import PredictorTester, Tester
+from tests.test_sampling import Tester
+from tests.utils import simulate_poiszero_hmm_seasonal, PredictorTester, plot_real_vs_simulation, time_series
 from pymc3_hmm.step_methods import FFBSStep
 import pymc3 as pm
 import theano.tensor as tt
 import numpy as np
 from datetime import datetime
-
-# %%
-import pandas as pd
-
-
-def time_series(N):
-    t = pd.date_range(end=pd.to_datetime('today'), periods=N, freq='H')
-    # month = pd.get_dummies(t.month)
-    week = pd.get_dummies(t.weekday).values
-    hour = pd.get_dummies(t.hour).values
-    return np.concatenate([week, hour], 1)
-
-
-# %%
-def simulate_poiszero_hmm_seasonal(N, mus=[10.0, 30.0],
-                                   pi_0_a=np.r_[1, 1, 1],
-                                   Gamma=np.r_['0,2,1', [5, 1, 1], [1, 3, 3], [1, 5, 10]],
-                                   betas=np.random.normal(800, 800, 31)
-                                   ):
-    assert pi_0_a.size == mus.size + 1 == Gamma.shape[0] == Gamma.shape[1]
-
-    with pm.Model() as test_model:
-        trans_rows = [pm.Dirichlet(f'p_{i}', r) for i, r in enumerate(Gamma)]
-        P_tt = tt.stack(trans_rows)
-        P_rv = pm.Deterministic('P_tt', P_tt)
-
-        pi_0_tt = pm.Dirichlet('pi_0', pi_0_a)
-
-        S_rv = HMMStateSeq('S_t', N, P_rv, pi_0_tt)
-
-        seasonality_x = time_series(N)
-        seasonal = tt.dot(seasonality_x, betas)
-        Y_rv = SwitchingProcess('Y_t',
-                                [pm.Constant.dist(0)]
-                                + [pm.Poisson.dist(mu * seasonal) for mu in mus],
-                                S_rv, observed=np.zeros(N))
-
-        y_test_point = pm.sample_prior_predictive(samples=1)
-
-    return y_test_point, test_model
-
-
-# %%
 import matplotlib.pyplot as plt
 
-week_effect = np.sort(np.random.gamma(shape=1, scale=1, size=7))
 
-
+# %%
 def rotate(l, n):
     l = list(l)
     return np.array(l[n:] + l[:n])
 
 
+week_effect = np.sort(np.random.gamma(shape=1, scale=1, size=7))
 day_effect = np.sort(np.random.gamma(shape=1, scale=0.5, size=24))
-
 day_effect = rotate(day_effect, 2)
 
 
@@ -76,40 +33,20 @@ N = 200
 poiszero_sim, _ = simulate_poiszero_hmm_seasonal(**based_d(N))
 
 states = poiszero_sim['S_t']
-sim_obs_ratio = sum((states == 0)*1) / len(states)
+sim_obs_ratio = sum((states == 0) * 1) / len(states)
 
 plt.plot(poiszero_sim['Y_t'],
          label=r'$y_t$', color='black',
          drawstyle='steps-pre', linewidth=0.5)
 
 plt.show()
+
 # %%
 pp = PredictorTester()
 pp.get_sample_dict(obs_ratio=sim_obs_ratio)
 
 # %%
-combos = list(pp.sample_dict.keys())
-num_of_plot = len(combos)
-
-fig, ax = plt.subplots(figsize=(15, 6.0), nrows=num_of_plot + 1)
-
-for i in range(num_of_plot):
-    example = pp.sample_dict[combos[i]]
-    ax[i].plot(example.impressions[-N:],
-               label=combos[i], color='black',
-               drawstyle='steps-pre', linewidth=0.5)
-
-ax[-1].plot(poiszero_sim['Y_t'],
-            label=r'$y_t$', color='black',
-            drawstyle='steps-pre', linewidth=0.5)
-
-for ax_ in ax:
-    ax_.legend()
-
-plt.tight_layout()
-
-plt.show()
-
+plot_real_vs_simulation(pp,poiszero_sim['Y_t'])
 
 # %%
 class TesterSeasonality(Tester):

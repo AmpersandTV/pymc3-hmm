@@ -1,6 +1,7 @@
 # %%
 from pymc3_hmm.distributions import HMMStateSeq, PoissonZeroProcess
 from pymc3_hmm.step_methods import FFBSStep
+from tests.utils import simulate_poiszero_hmm, PredictorTester
 import pymc3 as pm
 import theano.tensor as tt
 import numpy as np
@@ -152,51 +153,6 @@ import matplotlib.pyplot as plt
 poiszero_sim, _ = simulate_poiszero_hmm(**based_d(200))
 y_test = poiszero_sim['Y_t']
 sim_obs_ratio = 1- len(y_test[y_test==0])/len(y_test)
-# %%
-import pandas as pd
-
-with open('./amp_uri.txt', 'r') as f:
-    conn_str = f.readlines()[0].strip()
-
-
-class PredictorTester(object):
-
-    def __init__(self):
-        self.sample_dict, self.cur_d, self.sbp_d = {}, {}, {}
-        self.sample_combo = []
-        self._calc_ratio()
-
-    def _calc_ratio(self):
-        self.impression_ratio_df = pd.read_sql(
-            '''select dma_code, network_id, demo_id,market, network, demo_gender, demo_age_range,
-               1-(sum(cast(impressions = 0 as int)* 1.0))/count(*) as obs_ratio,
-                min(dt) as min_date
-                from nielsen.impressions_pop_dmn_temp
-                where population_size is not null
-                group by 1, 2, 3, 4, 5, 6, 7''',
-            con=conn_str,
-            index_col=['dma_code', 'network_id', 'demo_id'])
-
-    def get_sample_dict(self, obs_ratio: float):
-        ## read sample data in dictionary by non-zeros observation ratio
-        sample_idx = self.impression_ratio_df.query(f'obs_ratio == {obs_ratio}').sample(5, random_state=123)
-        self.sample_combo = sample_idx.index.values
-        qry_str = {i: r'''
-               select dt as t, impressions, population_size
-               from nielsen.impressions_pop_dmn_temp
-               where population_size is not null
-                 and dma_code='{}'
-                 and network_id='{}'
-                 and demo_id='{}'
-               order by dt
-               '''.format(*i) for i in self.sample_combo}
-
-        def read_with_drop_dup(str):
-            df = pd.read_sql(str, con=conn_str)
-            df = df.drop_duplicates(subset='t', keep='first').set_index('t')
-            return df
-
-        self.sample_dict = {i: read_with_drop_dup(qry_str[i]) for i in qry_str}
 
 # %%
 pp = PredictorTester()
