@@ -43,6 +43,16 @@ def poisson_subset_args(self, shape, idx):
 pm.Poisson.subset_args = poisson_subset_args
 
 
+def negbinom_subset_args(self, shape, idx):
+    return [
+        (broadcast_to(self.mu, shape))[idx],
+        (broadcast_to(self.alpha, shape))[idx],
+    ]
+
+
+pm.NegativeBinomial.subset_args = negbinom_subset_args
+
+
 def constant_subset_args(self, shape, idx):
     return [(broadcast_to(self.c, shape))[idx]]
 
