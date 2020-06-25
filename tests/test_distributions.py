@@ -181,3 +181,10 @@ def test_SwitchingProcess():
     assert np.all(50 < test_sample[test_states == 1])
     assert np.all(test_sample[test_states == 1] < 150)
     assert np.all(900 < test_sample[test_states == 2])
+
+
+def test_subset_args():
+    test_dist = pm.NegativeBinomial.dist(mu=np.r_[0.1, 1.2, 2.3], alpha=2)
+    res = test_dist.subset_args(shape=[3], idx=np.r_[0, 2])
+    assert np.array_equal(res[0].eval(), np.r_[0.1, 2.3])
+    assert np.array_equal(res[1].eval(), np.r_[2.0, 2.0])
