@@ -29,10 +29,13 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
         S_rv = HMMStateSeq("S_t", y_test.shape[0], P_rv, pi_0_tt)
         S_rv.tag.test_value = (y_test > 0).astype(np.int)
 
-        mu_1, mu_2 = 3000, 1000
+        mu_1, mu_2 = [3000, 1000]
 
         E_1_mu, Var_1_mu = mu_1 * off_param, mu_1 / 5
-        E_2_mu, Var_2_mu = (mu_2 - mu_1) * off_param, (mu_2 - mu_1) * 0.9
+        E_2_mu, Var_2_mu = (
+            abs(mu_2 - mu_1) * off_param,
+            abs(mu_2 - mu_1) * off_param / 5,
+        )
 
         mu_1_rv = pm.Gamma("mu_1", E_1_mu ** 2 / Var_1_mu, E_1_mu / Var_1_mu)
         mu_2_rv = pm.Gamma("mu_2", E_2_mu ** 2 / Var_2_mu, E_2_mu / Var_2_mu)
@@ -51,7 +54,6 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
             S_rv,
             observed=y_test,
         )
-
     with test_model:
         mu_step = pm.NUTS([mu_1_rv, mu_2_rv])
         ffbs = FFBSStep([S_rv])
@@ -73,4 +75,4 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
 
     assert mean_error_rate < 0.05
     assert MAPE < 0.05
-    return trace_, time_elapsed, test_model
+    return trace_, time_elapsed, test_model, simulation
