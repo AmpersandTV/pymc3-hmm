@@ -5,10 +5,17 @@ import theano.tensor as tt
 import pymc3 as pm
 import pandas as pd
 import numbers
+import theano
+
+theano.config.compute_test_value = "warn"
 
 
 def simulate_poiszero_hmm(
-    N, mus=np.r_[10.0, 30.0], pi_0_a=np.r_[1, 1], Gamma=np.r_["0,2", [5, 1], [1, 3]]
+    N,
+    mus=np.r_[10.0, 30.0],
+    pi_0_a=np.r_[1, 1],
+    Gamma=np.r_["0,2", [5, 1], [1, 3]],
+    **kwargs,
 ):
     if isinstance(mus, numbers.Number):
         mus = np.r_[mus]
@@ -62,6 +69,7 @@ def gen_defualt_params_seaonality(N):
         "mus": np.r_[3000.0 * seasonal, 1000.0 * seasonal],
         "pi_0_a": np.r_[1, 1, 1],
         "Gamma": np.r_["0,2,1", [10, 1, 5], [1, 10, 5], [5, 1, 20]],
+        "beta_s": betas,
     }
 
 
