@@ -5,20 +5,24 @@ import theano.tensor as tt
 from scipy.special import logsumexp
 
 
+vsearchsorted = np.vectorize(np.searchsorted, otypes=[np.int], signature="(n),()->()")
+
+
 def compute_steady_state(P):
     """Compute the steady state of a transition probability matrix.
 
     Parameters
     ----------
-    P: Theano matrix
-        A transition probability matrix for K states with shape (K, K)
+    P: TensorVariable
+        A transition probability matrix for `K` states with shape `(1, K, K)`.
 
     Returns
     -------
-    A tensor representing the steady state.
+    A tensor representing the steady state probabilities.
     """
 
-    N_states = P.shape[0]
+    P = P[0]
+    N_states = P.shape[-1]
     Lam = (tt.eye(N_states) - P + tt.ones((N_states, N_states))).T
     u = tt.slinalg.solve(Lam, tt.ones((N_states,)))
     return u
@@ -110,3 +114,32 @@ def logdotexp(A, b):
 
     res = logsumexp(A_bcast + b_bcast, axis=1)
     return res.squeeze() if sqz else res
+
+
+def tt_expand_dims(x, dims):
+    dim_range = list(range(x.ndim))
+    for d in sorted(np.atleast_1d(dims), reverse=True):
+        offset = 0 if d >= 0 else len(dim_range) + 1
+        dim_range.insert(d + offset, "x")
+
+    return x.dimshuffle(dim_range)
+
+
+def tt_broadcast_arrays(*args):
+    p = max(a.ndim for a in args)
+
+    args = [tt.shape_padleft(a, n_ones=p - a.ndim) if a.ndim < p else a for a in args]
+
+    bcast_shape = [None] * p
+    for i in range(p - 1, -1, -1):
+        non_bcast_args = [tuple(a.shape)[i] for a in args if not a.broadcastable[i]]
+        bcast_shape[i] = tt.max([1] + non_bcast_args)
+
+    return [a * tt.ones(bcast_shape) for a in args]
+
+
+def broadcast_to(x, shape):
+    if isinstance(x, np.ndarray):
+        return np.broadcast_to(x, shape)  # pragma: no cover
+    else:
+        return x * tt.ones(shape)

@@ -12,28 +12,12 @@ from theano.gof.op import get_test_value
 from pymc3.distributions.mixture import all_discrete, _conversion_map
 from pymc3.distributions.distribution import draw_values, _DrawValuesContext
 
-
-vsearchsorted = np.vectorize(np.searchsorted, otypes=[np.int], signature="(n),()->()")
-
-
-def tt_broadcast_arrays(*args):
-    p = max(a.ndim for a in args)
-
-    args = [tt.shape_padleft(a, n_ones=p - a.ndim) if a.ndim < p else a for a in args]
-
-    bcast_shape = [None] * p
-    for i in range(p - 1, -1, -1):
-        non_bcast_args = [tuple(a.shape)[i] for a in args if not a.broadcastable[i]]
-        bcast_shape[i] = tt.max([1] + non_bcast_args)
-
-    return [a * tt.ones(bcast_shape) for a in args]
-
-
-def broadcast_to(x, shape):
-    if isinstance(x, np.ndarray):
-        return np.broadcast_to(x, shape)  # pragma: no cover
-    else:
-        return x * tt.ones(shape)
+from pymc3_hmm.utils import (
+    broadcast_to,
+    tt_expand_dims,
+    tt_broadcast_arrays,
+    vsearchsorted,
+)
 
 
 # In general, these `*_subset_args` functions are such a terrible thing to
@@ -169,7 +153,7 @@ class SwitchingProcess(pm.Distribution):
             subset_dist = dist.dist(*dist.subset_args(obs.shape, i_idx))
             logp_val = tt.set_subtensor(logp_val[i_idx], subset_dist.logp(obs_i))
 
-        logp_val.name = "pois_zero_logp"
+        logp_val.name = "SwitchingProcess_logp"
 
         return logp_val
 
@@ -222,7 +206,6 @@ class SwitchingProcess(pm.Distribution):
                     subset_args = dist.subset_args(states.shape, i_idx, point=point)
                     samples[i_idx] = dist.dist(*subset_args).random(point=point)
 
-        # PyMC3 expects the dimension order size + shape
         return samples
 
 
@@ -253,50 +236,115 @@ class PoissonZeroProcess(SwitchingProcess):
 class HMMStateSeq(pm.Discrete):
     """A hidden markov state sequence distribution.
 
-    The class characterizes a vector random variable of state indicator
-    values (i.e. `0` to `M - 1`).
+    This class characterizes vector random variables consisting of state
+    indicator values (i.e. `0` to `M - 1`).
 
     """
 
-    def __init__(self, N=None, Gamma=None, gamma_0=None, **kwargs):
+    def __init__(self, Gamma, gamma_0, shape, **kwargs):
         """Initialize an `HMMStateSeq` object.
 
         Parameters
         ----------
-        N: int
-            The length of the state sequence.
-        Gamma: tensor matrix
-            An `M x M` matrix of state transition probabilities.  Each row,
-            `r`, should give the probability of transitioning from state `r`
-        gamma_0: tensor vector
-            The initial state probabilities.  Should be length `M`.
-
+        Gammas: TensorVariable
+            An array of transition probability matrices.  `Gammas` takes the
+            shape `... x N x M x M` for a state sequence of length `N` having
+            `M`-many distinct states.  Each row, `r`, in a transition probability
+            matrix gives the probability of transitioning from state `r` to each
+            other state.
+        gamma_0: TensorVariable
+            The initial state probabilities.  The last dimension should be length `M`,
+            i.e. the number of distinct states.
+        shape: Tuple[int]
+            Shape of the state sequence.  The last dimension is `N`, i.e. the
+            length of a state sequence.
         """
-        self.N = pm.intX(get_test_value(N))
-
-        try:
-            self.M = get_test_value(tt.shape(gamma_0)[-1])
-        except AttributeError:
-            self.M = tt.shape(gamma_0)[-1]
-
         self.gamma_0 = tt.as_tensor_variable(pm.floatX(gamma_0))
-        self.Gamma = tt.as_tensor_variable(Gamma)
 
-        shape = kwargs.pop("shape", tuple(np.atleast_1d(self.N)))
-        self.mode = tt.zeros(*shape)
+        assert Gamma.ndim >= 3
+
+        self.Gammas = tt.as_tensor_variable(pm.floatX(Gamma))
+
+        shape = np.atleast_1d(shape)
+
+        dtype = _conversion_map[theano.config.floatX]
+        self.mode = tt.zeros(tuple(shape), dtype=dtype)
 
         super().__init__(shape=shape, **kwargs)
 
-    def logp(self, obs):
-        """Return the scalar Theano log-likelihood at a point."""
-        V_0_logp = pm.Categorical.dist(self.gamma_0).logp(obs[0])
-        V_0_logp.name = "V_0_logp"
-        xi_t = self.Gamma[obs[:-1]]
-        xi_t.name = "xi_t"
-        V_t_logp = pm.Categorical.dist(xi_t, shape=(self.N - 1, self.M)).logp(obs[1:])
-        V_t_logp.name = "V_t_logp"
-        res = V_0_logp + tt.sum(V_t_logp)
-        res.name = "hmmstateseq_logl"
+    def logp(self, states):
+        r"""Create a Theano graph that computes the log-likelihood for a state sequence.
+
+        This is the log-likelihood for the joint distribution of states, :math:`S_t`, conditional
+        on state samples, :math:`s_t`, given by the following:
+
+        .. math::
+
+            \int P(S_1 = s_1 \mid S_0) dP(S_0) \prod^{T}_{t=2} P(S_t = s_t \mid S_{t-1} = s_{t-1})
+
+        The first term (i.e. the integral) simply computes the marginal :math:`P(S_1 = s_1)`, so
+        another way to express this result is as follows:
+
+        .. math::
+
+            P(S_1 = s_1) \prod^{T}_{t=2} P(S_t = s_t \mid S_{t-1} = s_{t-1})
+
+        """
+
+        Gammas = tt.shape_padleft(self.Gammas, states.ndim - (self.Gammas.ndim - 2))
+
+        # Multiply the initial state probabilities by the first transition
+        # matrix by to get the marginal probability for state `S_1`.
+        # The integral that produces the marginal is essentially
+        # `gamma_0.dot(Gammas[0])`
+        Gamma_1 = Gammas[..., 0:1, :, :]
+        gamma_0 = tt_expand_dims(self.gamma_0, (-3, -1))
+        P_S_1 = tt.sum(gamma_0 * Gamma_1, axis=-2)
+
+        # The `tt.switch`s allow us to broadcast the indexing operation when
+        # the replication dimensions of `states` and `Gammas` don't match
+        # (e.g. `states.shape[0] > Gammas.shape[0]`)
+        S_1_slices = tuple(
+            slice(
+                tt.switch(tt.eq(P_S_1.shape[i], 1), 0, 0),
+                tt.switch(tt.eq(P_S_1.shape[i], 1), 1, d),
+            )
+            for i, d in enumerate(states.shape)
+        )
+        S_1_slices = (tuple(tt.ogrid[S_1_slices]) if S_1_slices else tuple()) + (
+            states[..., 0:1],
+        )
+        logp_S_1 = tt.log(P_S_1[S_1_slices]).sum(axis=-1)
+
+        # These are slices for the extra dimensions--including the state
+        # sequence dimension (e.g. "time")--along which which we need to index
+        # the transition matrix rows using the "observed" `states`.
+        trans_slices = tuple(
+            slice(
+                tt.switch(
+                    tt.eq(Gammas.shape[i], 1), 0, 1 if i == states.ndim - 1 else 0
+                ),
+                tt.switch(tt.eq(Gammas.shape[i], 1), 1, d),
+            )
+            for i, d in enumerate(states.shape)
+        )
+        trans_slices = (tuple(tt.ogrid[trans_slices]) if trans_slices else tuple()) + (
+            states[..., :-1],
+        )
+
+        # Select the transition matrix row of each observed state; this yields
+        # `P(S_t | S_{t-1} = s_{t-1})`
+        P_S_2T = Gammas[trans_slices]
+
+        obs_slices = tuple(slice(None, d) for d in P_S_2T.shape[:-1])
+        obs_slices = (tuple(tt.ogrid[obs_slices]) if obs_slices else tuple()) + (
+            states[..., 1:],
+        )
+        logp_S_1T = tt.log(P_S_2T[obs_slices])
+
+        res = logp_S_1 + tt.sum(logp_S_1T, axis=-1)
+        res.name = "HMMStateSeq_logp"
+
         return res
 
     def random(self, point=None, size=None):
@@ -316,37 +364,34 @@ class HMMStateSeq(pm.Discrete):
         array
         """
         with _DrawValuesContext() as draw_context:
-            terms = [self.gamma_0, self.Gamma]
+            terms = [self.gamma_0, self.Gammas]
 
-            # TODO: Would it be better to use `size` here instead?
             gamma_0, Gamma = draw_values(terms, point=point)
 
-            N = self.N
-
-            state_n = pm.Categorical.dist(gamma_0).random(point=point, size=size).T
+            # Sample state 0 in each state sequence
+            state_n = pm.Categorical.dist(gamma_0, shape=self.shape[:-1]).random(
+                point=point, size=size
+            )
             state_shape = state_n.shape
 
-            states_shape = (N,) + state_shape
-            states = np.empty(states_shape, dtype=self.dtype)
-            states[0] = state_n
+            N = self.shape[-1]
 
-            unif_samples = np.random.uniform(size=states_shape)
+            states = np.empty(state_shape + (N,), dtype=self.dtype)
 
-            if Gamma.ndim > 2:
-                Gamma_bcast = np.broadcast_to(
-                    Gamma, Gamma.shape[:2] + tuple(state_shape)
-                )
+            unif_samples = np.random.uniform(size=states.shape)
 
-            for n in range(1, N):
-                if Gamma.ndim > 2:
-                    gamma_t = np.asarray(
-                        [Gamma_bcast[i][state_n[i]] for i in np.ndindex(state_shape)]
-                    )
-                else:
-                    gamma_t = Gamma[state_n, :]
+            # Make sure we have a transition matrix for each element in a state
+            # sequence
+            Gamma = np.broadcast_to(Gamma, tuple(states.shape) + Gamma.shape[-2:])
 
-                state_n = vsearchsorted(gamma_t.cumsum(axis=-1), unif_samples[n])
-                states[n] = state_n.reshape(state_shape)
+            # Slices across each independent/replication dimension
+            slices = [slice(None, d) for d in state_shape]
+            slices = tuple(np.ogrid[slices])
 
-            # PyMC3 expects the dimension order size + shape
-            return states.T
+            for n in range(0, N):
+                gamma_t = Gamma[..., n, :, :]
+                gamma_t = gamma_t[slices + (state_n,)]
+                state_n = vsearchsorted(gamma_t.cumsum(axis=-1), unif_samples[..., n])
+                states[..., n] = state_n
+
+            return states
