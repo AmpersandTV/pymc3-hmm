@@ -16,11 +16,11 @@ def simulate_poiszero_hmm(
         p_1_rv = pm.Dirichlet("p_1", p_1_a)
 
         P_tt = tt.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", P_tt)
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
 
         pi_0_tt = pm.Dirichlet("pi_0", pi_0_a)
 
-        S_rv = HMMStateSeq("S_t", N, P_rv, pi_0_tt)
+        S_rv = HMMStateSeq("S_t", P_rv, pi_0_tt, shape=N)
 
         Y_rv = PoissonZeroProcess("Y_t", mu, S_rv, observed=np.zeros(N))
 
@@ -28,6 +28,6 @@ def simulate_poiszero_hmm(
 
         # TODO FIXME: Why is `pm.sample_prior_predictive` adding an extra
         # dimension to the `Y_rv` result?
-        sample_point["Y_t"] = sample_point["Y_t"].squeeze()
+        sample_point[Y_rv.name] = sample_point[Y_rv.name].squeeze()
 
     return sample_point, test_model

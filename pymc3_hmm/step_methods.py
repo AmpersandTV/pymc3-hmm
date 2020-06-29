@@ -18,52 +18,84 @@ big: np.float = 1e20
 small: np.float = 1.0 / big
 
 
-def ffbs_astep(gamma_0, Gamma, log_lik):
+def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
+    """Sample a forward-filtered backward-sampled (FFBS) state sequence.
+
+    Parameters
+    ----------
+    gamma_0: np.ndarray
+        The initial state probabilities.
+    Gamma: np.ndarray
+        The transition probability matrices.  This array should take the shape
+        `(N, M, M)`, where `N` is the state sequence length and `M` is the number
+        of distinct states.  If `N` is `1`, the single transition matrix will
+        broadcast across all elements of the state sequence.
+    log_lik: np.ndarray
+        An array of shape `(M, N)` consisting of the log-likelihood values for
+        each state value at each point in the sequence.
+
+    Returns
+    -------
+    samples: np.ndarray
+        An array of shape `(N,)` containing the FFBS sampled state sequence.
+
+    """
     # Number of observations
-    N: int = log_lik.shape[0]
+    N: int = log_lik.shape[-1]
+
     # Number of states
-    M: int = log_lik.shape[1]
+    M: int = gamma_0.shape[-1]
+    # assert M == log_lik.shape[-2]
 
     # Initial state probabilities
     gamma_0_normed: np.ndarray = gamma_0
-    gamma_0_sum = np.sum(gamma_0)
+    gamma_0_sum: float = np.sum(gamma_0)
     gamma_0_normed /= gamma_0_sum
 
     # "Forward" probabilities
-    alphas: np.ndarray = np.empty((N, M), dtype=np.float)
+    alphas: np.ndarray = np.empty((M, N), dtype=np.float)
     # Previous forward probability
     alpha_nm1: np.ndarray = gamma_0_normed
 
+    # Make sure we have a transition matrix for each element in a state
+    # sequence
+    Gamma: np.ndarray = np.broadcast_to(Gammas, (N,) + Gammas.shape[-2:])
+
     # Forward filtering
     for n in range(N):
-        log_lik_n = log_lik[n]
-        lik_n = np.exp(log_lik_n - log_lik_n.max())
-        alpha_n: np.ndarray = lik_n * np.dot(Gamma, alpha_nm1)
-        alpha_n_sum = np.sum(alpha_n)
+        log_lik_n: np.ndarray = log_lik[..., n]
+        lik_n: np.ndarray = np.exp(log_lik_n - log_lik_n.max())
+        Gamma_n: np.ndarray = Gamma[n]
+        alpha_n: np.ndarray = lik_n * np.dot(alpha_nm1, Gamma_n)
+        alpha_n_sum: float = np.sum(alpha_n)
 
         # Rescale small values
-        if alpha_n_sum < small:
+        if np.all(alpha_n_sum < small):
             alpha_n *= big
 
         alpha_nm1 = alpha_n
-        alphas[n] = alpha_n
+        alphas[..., n] = alpha_n
 
-    # Our sample results
+    # The FFBS samples
     samples: np.ndarray = np.empty((N,), dtype=np.int8)
-    # The uniform samples used to sample the categorical states
-    unif_samples: np.ndarray = np.random.uniform(size=N)
 
-    beta_N: np.ndarray = alphas[N - 1] / alphas[N - 1].sum()
+    # The uniform samples used to sample the categorical states
+    unif_samples: np.ndarray = np.random.uniform(size=samples.shape)
+
+    alpha_N: np.ndarray = alphas[..., N - 1]
+    beta_N: np.ndarray = alpha_N / alpha_N.sum()
+
     state_np1: np.ndarray = np.searchsorted(beta_N.cumsum(), unif_samples[N - 1])
+
     samples[N - 1] = state_np1
 
     # Backward sampling
     for n in range(N - 2, -1, -1):
-        beta_n: np.ndarray = Gamma[state_np1] * alphas[n]
+        Gamma_np1: np.ndarray = Gamma[n, :, state_np1]
+        beta_n: np.ndarray = alphas[..., n] * Gamma_np1
         beta_n /= np.sum(beta_n)
 
         state_np1 = np.searchsorted(beta_n.cumsum(), unif_samples[n])
-
         samples[n] = state_np1
 
     return samples
@@ -80,32 +112,38 @@ class FFBSStep(ArrayStep):
 
         (var,) = pm.inputvars(var)
 
-        self.M = var.distribution.M.astype(int)
-        self.N = var.distribution.N.astype(int)
-
-        dependent_rvs = [
+        self.dependent_rvs = [
             v
             for v in model.basic_RVs
             if v is not var and var in tt.gof.graph.inputs([v.logpt])
         ]
 
-        # We can use this function to get log-likelihood values for each state.
+        # We compile a function--from a Theano graph--that computes the
+        # total log-likelihood values for each state in the sequence.
         dependents_log_lik = model.fn(
-            tt.add(*[v.logp_elemwiset for v in dependent_rvs])
+            tt.sum([v.logp_elemwiset for v in self.dependent_rvs], axis=0)
         )
 
         self.gamma_0_fn = model.fn(var.distribution.gamma_0)
-        self.Gamma_fn = model.fn(var.distribution.Gamma)
+        self.Gammas_fn = model.fn(var.distribution.Gammas)
 
         super().__init__([var], [dependents_log_lik], allvars=True)
 
     def astep(self, point, log_lik_fn, inputs):
         gamma_0 = self.gamma_0_fn(inputs)
-        Gamma_t = self.Gamma_fn(inputs)
-        log_lik_vals = [log_lik_fn(np.repeat(m, self.N)) for m in range(self.M)]
-        log_lik_t = np.stack(log_lik_vals, 1)
+        Gammas_t = self.Gammas_fn(inputs)
 
-        return ffbs_astep(gamma_0, Gamma_t, log_lik_t)
+        M = gamma_0.shape[-1]
+        N = point.shape[-1]
+
+        # TODO: Why won't broadcasting work with `log_lik_fn`?  Seems like we
+        # could be missing out on a much more efficient/faster approach to this
+        # potentially large computation.
+        # state_seqs = np.broadcast_to(np.arange(M, dtype=np.int)[..., None], (M, N))
+        # log_lik_t = log_lik_fn(state_seqs)
+        log_lik_t = np.stack([log_lik_fn(np.broadcast_to(m, N)) for m in range(M)])
+
+        return ffbs_astep(gamma_0, Gammas_t, log_lik_t)
 
     @staticmethod
     def competence(var):

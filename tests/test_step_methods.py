@@ -22,11 +22,22 @@ def test_ffbs_astep():
 
     np.random.seed(2032)
 
-    test_log_lik_0 = np.stack([np.repeat(0.0, 10000), np.repeat(-np.inf, 10000)], 1)
-    test_log_lik_1 = np.stack([np.repeat(-np.inf, 10000), np.repeat(0.0, 10000)], 1)
-
-    test_Gamma_t = np.c_[[0.9, 0.1], [0.1, 0.9]].T
+    # A single transition matrix and initial probabilities vector for each
+    # element in the state sequence
+    test_Gammas = np.array([[[0.9, 0.1], [0.1, 0.9]]])
     test_gamma_0 = np.r_[0.5, 0.5]
+
+    test_log_lik_0 = np.stack(
+        [np.broadcast_to(0.0, 10000), np.broadcast_to(-np.inf, 10000)]
+    )
+    res = ffbs_astep(test_gamma_0, test_Gammas, test_log_lik_0)
+    assert np.all(res == 0)
+
+    test_log_lik_1 = np.stack(
+        [np.broadcast_to(-np.inf, 10000), np.broadcast_to(0.0, 10000)]
+    )
+    res = ffbs_astep(test_gamma_0, test_Gammas, test_log_lik_1)
+    assert np.all(res == 1)
 
     # A well-separated mixture with non-degenerate likelihoods
     test_seq = np.random.choice(2, size=10000)
@@ -37,21 +48,35 @@ def test_ffbs_astep():
     )
     test_log_lik_p = np.stack(
         [sp.stats.poisson.logpmf(test_obs, 10), sp.stats.poisson.logpmf(test_obs, 50)],
-        1,
     )
 
     # TODO FIXME: This is a statistically unsound/unstable check.
-    assert np.mean(np.abs(test_log_lik_p.argmax(1) - test_seq)) < 1e-2
+    assert np.mean(np.abs(test_log_lik_p.argmax(0) - test_seq)) < 1e-2
 
-    res = ffbs_astep(test_gamma_0, test_Gamma_t, test_log_lik_0)
-    assert np.all(res == 0)
-
-    res = ffbs_astep(test_gamma_0, test_Gamma_t, test_log_lik_1)
-    assert np.all(res == 1)
-
-    res = ffbs_astep(test_gamma_0, test_Gamma_t, test_log_lik_p)
+    res = ffbs_astep(test_gamma_0, test_Gammas, test_log_lik_p)
     # TODO FIXME: This is a statistically unsound/unstable check.
     assert np.mean(np.abs(res - test_seq)) < 1e-2
+
+    # "Time"-varying transition matrices that specify strictly alternating
+    # states--except for the second-to-last one
+    test_Gammas = np.stack(
+        [
+            np.array([[0.0, 1.0], [1.0, 0.0]]),
+            np.array([[0.0, 1.0], [1.0, 0.0]]),
+            np.array([[1.0, 0.0], [0.0, 1.0]]),
+            np.array([[0.0, 1.0], [1.0, 0.0]]),
+        ],
+        axis=0,
+    )
+
+    test_gamma_0 = np.r_[1.0, 0.0]
+
+    test_log_lik = np.tile(np.r_[np.log(0.9), np.log(0.1)], (4, 1))
+    test_log_lik[::2] = test_log_lik[::2][:, ::-1]
+    test_log_lik = test_log_lik.T
+
+    res = ffbs_astep(test_gamma_0, test_Gammas, test_log_lik)
+    assert np.array_equal(res, np.r_[1, 0, 0, 1])
 
 
 def test_FFBSStep():
@@ -66,11 +91,11 @@ def test_FFBSStep():
         p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
 
         P_tt = tt.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", P_tt)
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
 
         pi_0_tt = compute_steady_state(P_rv)
 
-        S_rv = HMMStateSeq("S_t", y_test.shape[0], P_rv, pi_0_tt)
+        S_rv = HMMStateSeq("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
 
         Y_rv = PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
 
@@ -91,7 +116,8 @@ def test_FFBSStep_extreme():
 
     np.random.seed(2032)
 
-    poiszero_sim, _ = simulate_poiszero_hmm(9000, 5000)
+    mu_true = 5000
+    poiszero_sim, _ = simulate_poiszero_hmm(9000, mu_true)
     y_test = poiszero_sim["Y_t"]
 
     with pm.Model() as test_model:
@@ -99,14 +125,14 @@ def test_FFBSStep_extreme():
         p_1_rv = poiszero_sim["p_1"]
 
         P_tt = tt.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", P_tt)
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
 
         pi_0_tt = poiszero_sim["pi_0"]
 
-        S_rv = HMMStateSeq("S_t", y_test.shape[0], P_rv, pi_0_tt)
-        # S_rv.tag.test_value = (y_test > 0).astype(np.int)
+        S_rv = HMMStateSeq("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
 
-        E_mu, Var_mu = 10.0, 10.0
+        # This prior is very far from the true value...
+        E_mu, Var_mu = 10.0, 1000.0
         mu_rv = pm.Gamma("mu", E_mu ** 2 / Var_mu, E_mu / Var_mu)
 
         Y_rv = PoissonZeroProcess("Y_t", mu_rv, S_rv, observed=y_test)
@@ -122,24 +148,27 @@ def test_FFBSStep_extreme():
 
     assert np.array_equal(res["S_t"], poiszero_sim["S_t"])
 
-    # Now, make sure that NUTS doesn't fail right away
     with test_model, np.errstate(
-        over="ignore", under="raise"
+        over="ignore", under="ignore"
     ), warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning)
+        warnings.filterwarnings("ignore", category=DeprecationWarning)
+        warnings.filterwarnings("ignore", category=FutureWarning)
         mu_step = pm.NUTS([mu_rv])
         ffbs = FFBSStep([S_rv])
         steps = [ffbs, mu_step]
         trace = pm.sample(
-            5,
-            init="adapt_diag",
+            20,
             step=steps,
             cores=1,
             chains=1,
-            tune=1,
-            n_init=1,
+            tune=100,
+            n_init=100,
             progressbar=False,
         )
+
+        assert not trace.get_sampler_stats("diverging").all()
+        assert trace["mu"].mean() > 1000.0
 
 
 def test_TransMatConjugateStep():
@@ -154,11 +183,11 @@ def test_TransMatConjugateStep():
         p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
 
         P_tt = tt.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", P_tt)
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
 
         pi_0_tt = compute_steady_state(P_rv)
 
-        S_rv = HMMStateSeq("S_t", y_test.shape[0], P_rv, pi_0_tt)
+        S_rv = HMMStateSeq("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
 
         Y_rv = PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
 
