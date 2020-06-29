@@ -56,7 +56,7 @@ def gen_defualt_params_seaonality(N):
         return np.array(l[n:] + l[:n])
 
     week_effect = np.sort(np.random.gamma(shape=1, scale=1, size=7))
-    day_effect = np.sort(np.random.gamma(shape=1, scale=0.5, size=24))
+    day_effect = np.sort(np.random.gamma(shape=1, scale=1, size=24))
     day_effect = rotate(day_effect, 2)
     week_effect = rotate(week_effect, 1)
 
