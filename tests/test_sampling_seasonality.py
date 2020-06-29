@@ -3,14 +3,12 @@ from tests.utils import (
     gen_defualt_params_seaonality,
     time_series,
     simulate_poiszero_hmm,
+    check_metrics,
 )
 from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep
 import pymc3 as pm
 import theano.tensor as tt
 import numpy as np
-from datetime import datetime
-
-# %%
 import random
 
 
@@ -63,21 +61,8 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
         ffbs = FFBSStep([S_rv])
         transitions = TransMatConjugateStep([p_0_rv, p_1_rv, p_2_rv], S_rv)
         steps = [ffbs, mu_step, transitions]
-        start_time = datetime.now()
         trace_ = pm.sample(N, step=steps, return_inferencedata=True, chains=1)
-        time_elapsed = datetime.now() - start_time
-        y_trace = pm.sample_posterior_predictive(trace_.posterior)["Y_t"].mean(axis=0)
+        posterior = pm.sample_posterior_predictive(trace_.posterior)
 
-    st_trace = trace_.posterior["S_t"].mean(axis=0).mean(axis=0)
-    mean_error_rate = (
-        1
-        - np.sum(np.equal(st_trace == 0, simulation["S_t"] == 0) * 1)
-        / len(simulation["S_t"])
-    ).values.tolist()
-
-    positive_index = simulation["Y_t"] > 0
-    positive_sim = simulation["Y_t"][positive_index]
-    MAPE = np.nanmean(abs(y_trace[positive_index] - positive_sim) / positive_sim)
-    assert mean_error_rate < 0.05
-    assert MAPE < 0.3
-    return trace_, time_elapsed, test_model, simulation, kwargs, y_trace
+    check_metrics(trace_, posterior, simulation)
+    # return trace_, time_elapsed, test_model, simulation, kwargs, y_trace

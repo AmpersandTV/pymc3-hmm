@@ -6,6 +6,7 @@ import pymc3 as pm
 import pandas as pd
 import numbers
 import theano
+import arviz as az
 
 theano.config.compute_test_value = "warn"
 
@@ -45,7 +46,7 @@ def simulate_poiszero_hmm(
 def time_series(N):
     t = pd.date_range(end=pd.to_datetime("today"), periods=N, freq="H")
     # month = pd.get_dummies(t.month)
-    week = pd.get_dummies(t.weekday).values
+    week = pd.get_dummies(t.dayofweek).values
     hour = pd.get_dummies(t.hour).values
     return np.concatenate([week, hour], 1)
 
@@ -80,3 +81,43 @@ def gen_defualt_param(N):
         "pi_0_a": np.r_[1, 1, 1],
         "Gamma": np.r_["0,2,1", [5, 1, 1], [1, 3, 1], [1, 1, 5]],
     }
+
+
+def check_metrics(trace_, posterior, simulation):
+
+    ## checking for state prediction
+    st_trace = trace_.posterior["S_t"].mean(axis=0).mean(axis=0)
+    mean_error_rate = (
+        1
+        - np.sum(np.equal(st_trace == 0, simulation["S_t"] == 0) * 1)
+        / len(simulation["S_t"])
+    ).values.tolist()
+
+    ## check for positive possion
+    positive_index = simulation["Y_t"] > 0
+    positive_sim = simulation["Y_t"][positive_index]
+    ## point metric
+    y_trace = posterior["Y_t"].mean(axis=0)
+    MAPE = np.nanmean(abs(y_trace[positive_index] - positive_sim) / positive_sim)
+
+    ## confidence_metrics_
+    az_post_trace = az.from_pymc3(posterior_predictive=posterior)
+    post_pred_imps_hpd_df = az.hdi(
+        az_post_trace, hdi_prob=0.95, group="posterior_predictive", var_names=["Y_t"]
+    ).to_dataframe()
+
+    post_pred_imps_hpd_df = post_pred_imps_hpd_df.unstack(level="hdi")
+    post_pred_imps_hpd_df.columns = post_pred_imps_hpd_df.columns.set_levels(
+        ["upper", "lower"], level="hdi"
+    )
+    pred_range = post_pred_imps_hpd_df[positive_index]["Y_t"]
+    pred_range["T_Y"] = simulation["Y_t"][positive_index]
+
+    pred_95_CI = sum(
+        (pred_range["T_Y"] < pred_range["upper"])
+        & (pred_range["T_Y"] > pred_range["lower"]) * 1
+    ) / len(pred_range)
+
+    assert mean_error_rate < 0.05
+    assert MAPE < 0.3
+    assert pred_95_CI < 0.3
