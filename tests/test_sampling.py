@@ -1,5 +1,5 @@
 from pymc3_hmm.distributions import HMMStateSeq, SwitchingProcess
-from tests.utils import gen_defualt_param, simulate_poiszero_hmm, check_metrics
+from tests.utils import simulate_poiszero_hmm, check_metrics
 from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep
 import pymc3 as pm
 import theano.tensor as tt
@@ -7,7 +7,12 @@ import numpy as np
 
 
 def test_sampling(N: int = 200, off_param=1):
-    kwargs = gen_defualt_param(N)
+    kwargs = {
+        "N": N,
+        "mus": [5000, 7000],
+        "pi_0_a": np.r_[1, 1, 1],
+        "Gamma": np.r_["0,2,1", [5, 1, 1], [1, 3, 1], [1, 1, 5]],
+    }
     simulation, _ = simulate_poiszero_hmm(**kwargs)
 
     with pm.Model() as test_model:
@@ -27,18 +32,14 @@ def test_sampling(N: int = 200, off_param=1):
         mu_1, mu_2 = kwargs["mus"]
 
         E_1_mu, Var_1_mu = mu_1 * off_param, mu_1 / 5
-        E_2_mu, Var_2_mu = (mu_2 - mu_1) * off_param, (mu_2 - mu_1) * 0.9
+        E_2_mu, Var_2_mu = (mu_2) * off_param, (mu_2) * 0.9
 
         mu_1_rv = pm.Gamma("mu_1", E_1_mu ** 2 / Var_1_mu, E_1_mu / Var_1_mu)
         mu_2_rv = pm.Gamma("mu_2", E_2_mu ** 2 / Var_2_mu, E_2_mu / Var_2_mu)
 
         Y_rv = SwitchingProcess(
             "Y_t",
-            [
-                pm.Constant.dist(0),
-                pm.Poisson.dist(mu_1_rv),
-                pm.Poisson.dist(mu_1_rv + mu_2_rv),
-            ],
+            [pm.Constant.dist(0), pm.Poisson.dist(mu_1_rv), pm.Poisson.dist(mu_2_rv),],
             S_rv,
             observed=y_test,
         )

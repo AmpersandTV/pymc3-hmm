@@ -1,7 +1,5 @@
 from pymc3_hmm.distributions import HMMStateSeq, SwitchingProcess
 from tests.utils import (
-    gen_defualt_params_seaonality,
-    time_series,
     simulate_poiszero_hmm,
     check_metrics,
 )
@@ -10,11 +8,34 @@ import pymc3 as pm
 import theano.tensor as tt
 import numpy as np
 import random
+import pandas as pd
+import patsy
+
+
+# %%
+def gen_design_matrix(N):
+    t = pd.date_range(end=pd.to_datetime("today"), periods=N, freq="H").to_frame()
+    t["weekday"] = t[0].dt.dayofweek
+    t["hour"] = t[0].dt.hour
+    t.reset_index()
+    formula_str = " 1 +  C(hour) + C(weekday)"
+    X_df = patsy.dmatrix(formula_str, t, return_type="dataframe")
+    return X_df.values
 
 
 def test_seasonality_sampling(N: int = 200, off_param=1):
     random.seed(123)
-    kwargs = gen_defualt_params_seaonality(N)
+
+    X_t = gen_design_matrix(N)
+    betas = np.sort(np.random.gamma(1, 1500, size=X_t.shape[1]))
+    eta_r = tt.dot(X_t, betas)
+
+    kwargs = {
+        "N": N,
+        "mus": [3000.0 + eta_r, 1000.0 + eta_r],
+        "pi_0_a": np.r_[1, 1, 1],
+        "Gamma": np.r_["0,2,1", [10, 1, 5], [1, 10, 5], [5, 1, 20]],
+    }
     simulation, _ = simulate_poiszero_hmm(**kwargs)
 
     with pm.Model() as test_model:
@@ -35,29 +56,29 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
 
         E_1_mu, Var_1_mu = mu_1 * off_param, mu_1 / 5
         E_2_mu, Var_2_mu = (
-            abs(mu_2 - mu_1) * off_param,
-            abs(mu_2 - mu_1) * off_param / 5,
+            abs(mu_2) * off_param,
+            abs(mu_2) * off_param / 5,
         )
 
         mu_1_rv = pm.Gamma("mu_1", E_1_mu ** 2 / Var_1_mu, E_1_mu / Var_1_mu)
         mu_2_rv = pm.Gamma("mu_2", E_2_mu ** 2 / Var_2_mu, E_2_mu / Var_2_mu)
 
-        s = time_series(N)
-        beta_s = pm.Gamma("beta_s", 1, 1, shape=(s.shape[1],))
-        seasonal = tt.dot(s, beta_s)
+        X = gen_design_matrix(N)
+        beta_s = pm.Normal("beta_s", 1, 1500, shape=(X.shape[1],))
+        eta = tt.dot(X, beta_s)
 
         Y_rv = SwitchingProcess(
             "Y_t",
             [
                 pm.Constant.dist(0),
-                pm.Poisson.dist(E_1_mu * seasonal),
-                pm.Poisson.dist((E_2_mu) * seasonal),
+                pm.Poisson.dist(mu_1_rv + eta),
+                pm.Poisson.dist(mu_2_rv + eta),
             ],
             S_rv,
             observed=y_test,
         )
     with test_model:
-        mu_step = pm.NUTS([mu_1_rv, mu_2_rv])
+        mu_step = pm.NUTS([mu_1_rv, mu_2_rv, beta_s])
         ffbs = FFBSStep([S_rv])
         transitions = TransMatConjugateStep([p_0_rv, p_1_rv, p_2_rv], S_rv)
         steps = [ffbs, mu_step, transitions]
@@ -65,4 +86,4 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
         posterior = pm.sample_posterior_predictive(trace_.posterior)
 
     check_metrics(trace_, posterior, simulation)
-    # return trace_, time_elapsed, test_model, simulation, kwargs, y_trace
+    return trace_, test_model, simulation, kwargs, posterior
