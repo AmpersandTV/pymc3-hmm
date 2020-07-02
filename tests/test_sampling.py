@@ -7,6 +7,7 @@ import numpy as np
 
 
 def test_sampling(N: int = 200, off_param=1):
+    np.random.seed(123)
     kwargs = {
         "N": N,
         "mus": [5000, 7000],
@@ -31,8 +32,8 @@ def test_sampling(N: int = 200, off_param=1):
 
         mu_1, mu_2 = kwargs["mus"]
 
-        E_1_mu, Var_1_mu = mu_1 * off_param, mu_1 / 5
-        E_2_mu, Var_2_mu = (mu_2) * off_param, (mu_2) * 0.9
+        E_1_mu, Var_1_mu = mu_1 * off_param, mu_1 * off_param / 5
+        E_2_mu, Var_2_mu = (mu_2) * off_param, mu_2 * off_param / 5
 
         mu_1_rv = pm.Gamma("mu_1", E_1_mu ** 2 / Var_1_mu, E_1_mu / Var_1_mu)
         mu_2_rv = pm.Gamma("mu_2", E_2_mu ** 2 / Var_2_mu, E_2_mu / Var_2_mu)

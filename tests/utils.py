@@ -76,6 +76,6 @@ def check_metrics(trace_, posterior, simulation):
 
     print(mean_error_rate, MAPE, pred_CI)
     print(pred_range)
-    assert mean_error_rate < 0.05
-    assert MAPE < 0.05
-    assert pred_CI > CI_CONF
+    assert mean_error_rate <= 0.05
+    assert MAPE <= 0.05
+    assert pred_CI >= CI_CONF - 0.05

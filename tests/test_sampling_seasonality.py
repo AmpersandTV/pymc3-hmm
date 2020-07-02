@@ -7,7 +7,6 @@ from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep
 import pymc3 as pm
 import theano.tensor as tt
 import numpy as np
-import random
 import pandas as pd
 import patsy
 
@@ -23,10 +22,10 @@ def gen_design_matrix(N):
 
 
 def test_seasonality_sampling(N: int = 200, off_param=1):
-    random.seed(123)
+    np.random.seed(2032)
 
     X_t = gen_design_matrix(N)
-    betas_intercept = np.random.normal(3, 0.5, size=1)
+    betas_intercept = np.random.normal(np.log(3000), 1, size=1)
     betas_hour = np.sort(np.random.normal(1, 0.5, size=23))
     betas_week = np.sort(np.random.normal(1, 0.5, size=6))
 
@@ -55,7 +54,7 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
         S_rv.tag.test_value = (y_test > 0).astype(np.int)
 
         X = gen_design_matrix(N)
-        beta_s_intercept = pm.Normal("beta_s_intercept", 3, 0.5, shape=(1,))
+        beta_s_intercept = pm.Normal("beta_s_intercept", 8, 1, shape=(1,))
         beta_s_hour = pm.Normal("beta_s_hour", 1, 0.5, shape=(23,))
         beta_s_week = pm.Normal("beta_s_week", 1, 0.5, shape=(6,))
 
@@ -75,8 +74,4 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
         trace_ = pm.sample(N, step=steps, return_inferencedata=True, chains=1)
         posterior = pm.sample_posterior_predictive(trace_.posterior)
 
-    print(betas, trace_.posterior["beta_s"].values.mean(0))
-    print(posterior["Y_t"].mean(axis=0))
     check_metrics(trace_, posterior, simulation)
-
-    return trace_, test_model, simulation, kwargs, posterior
