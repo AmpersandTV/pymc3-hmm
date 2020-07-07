@@ -11,7 +11,11 @@ theano.config.compute_test_value = "warn"
 
 
 def simulate_poiszero_hmm(
-    N, mus=np.r_[10.0, 30.0], pi_0_a=np.r_[1, 1], Gamma=np.r_["0,2", [5, 1], [1, 3]]
+    N,
+    mus=np.r_[10.0, 30.0],
+    pi_0_a=np.r_[1, 1],
+    Gamma=np.r_["0,2", [5, 1], [1, 3]],
+    cls=pm.Poisson,
 ):
     if isinstance(mus, numbers.Number):
         mus = [mus]
@@ -28,7 +32,7 @@ def simulate_poiszero_hmm(
 
         Y_rv = SwitchingProcess(
             "Y_t",
-            [pm.Constant.dist(0)] + [pm.Poisson.dist(mu) for mu in mus],
+            [pm.Constant.dist(0)] + [cls.dist(mu) for mu in mus],
             S_rv,
             observed=np.zeros(N),
         )

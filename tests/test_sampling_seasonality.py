@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import patsy
 
-# %%
+
 def gen_design_matrix(N):
     t = pd.date_range(end=pd.to_datetime("today"), periods=N, freq="H").to_frame()
     t["weekday"] = t[0].dt.dayofweek
