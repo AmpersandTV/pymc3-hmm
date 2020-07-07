@@ -1,5 +1,5 @@
 from pymc3_hmm.distributions import HMMStateSeq, SwitchingProcess
-from tests.utils import simulate_poiszero_hmm, check_metrics
+from tests.utils import simulate_poiszero_hmm, check_metrics_for_sampling
 from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep
 import pymc3 as pm
 import theano.tensor as tt
@@ -52,7 +52,7 @@ def test_sampling(N: int = 200, off_param=1):
         steps = [ffbs, mu_step, transitions]
         trace_ = pm.sample(N, step=steps, return_inferencedata=True, chains=1)
         posterior = pm.sample_posterior_predictive(trace_.posterior)
-        check_metrics(trace_, posterior, simulation)
+        check_metrics_for_sampling(trace_, posterior, simulation)
 
 
 # def test_PriorRobust():

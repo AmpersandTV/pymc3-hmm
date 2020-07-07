@@ -38,7 +38,20 @@ def simulate_poiszero_hmm(
     return y_test_point, test_model
 
 
-def check_metrics(trace_, posterior, simulation):
+def check_metrics_for_sampling(trace_, posterior, simulation):
+    """
+    this function is to check the how the posterior generated matches matched with the simulated toy series
+
+    Parameters
+    ----------
+    trace_ : trace object returned from pm.sampling,
+    posterior : posterior prediction
+    simulation : simulated toy series generated from `simulate_poiszero_hmm` funcion
+
+    Returns None
+    -------
+
+    """
 
     ## checking for state prediction
     st_trace = trace_.posterior["S_t"].mean(axis=0).mean(axis=0)
@@ -53,13 +66,13 @@ def check_metrics(trace_, posterior, simulation):
     positive_sim = simulation["Y_t"][positive_index]
     ## point metric
     y_trace = posterior["Y_t"].mean(axis=0)
-    MAPE = np.mean(abs(y_trace[positive_index] - positive_sim) / positive_sim)
+    mape = np.mean(abs(y_trace[positive_index] - positive_sim) / positive_sim)
 
     ## confidence_metrics_
     az_post_trace = az.from_pymc3(posterior_predictive=posterior)
-    CI_CONF = 0.95
+    ci_conf = 0.95
     post_pred_imps_hpd_df = az.hdi(
-        az_post_trace, hdi_prob=CI_CONF, group="posterior_predictive", var_names=["Y_t"]
+        az_post_trace, hdi_prob=ci_conf, group="posterior_predictive", var_names=["Y_t"]
     ).to_dataframe()
 
     post_pred_imps_hpd_df = post_pred_imps_hpd_df.unstack(level="hdi")
@@ -69,13 +82,11 @@ def check_metrics(trace_, posterior, simulation):
     pred_range = post_pred_imps_hpd_df[positive_index]["Y_t"]
     pred_range["T_Y"] = simulation["Y_t"][positive_index]
 
-    pred_CI = sum(
+    pred_ci = sum(
         (pred_range["T_Y"] <= pred_range["upper"])
         & (pred_range["T_Y"] >= pred_range["lower"]) * 1
     ) / len(pred_range)
 
-    print(mean_error_rate, MAPE, pred_CI)
-    print(pred_range)
     assert mean_error_rate <= 0.05
-    assert MAPE <= 0.05
-    assert pred_CI >= CI_CONF - 0.05
+    assert mape <= 0.05
+    assert pred_ci >= ci_conf - 0.05
