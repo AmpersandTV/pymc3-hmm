@@ -40,7 +40,20 @@ class ZeroTruncatedPoisson(pm.Poisson):
         # log(PDF) = log(mu^k) - (log(k!) + log(e^mu - 1))
         #
         # See https://en.wikipedia.org/wiki/Zero-truncated_Poisson_distribution
-        p = logpow(mu, value) - (factln(value) + pm.math.log(pm.math.exp(mu) - 1))
+        # transformed log(e^mu - 1) to more stable form log(1 - exp(-mu)) + mu and
+        # implmented log1mexp(x) = log(1 - exp(-x)) according to
+        # https://cran.r-project.org/web/packages/Rmpfr/vignettes/log1mexp-note.pdf
+        #  log1mexp(a) := (
+        #       log(−expm1(−a))         0 < a ≤ a0( := log 2 ≈ 0.693)
+        #       log1p(− exp(−a))        a > a0
+
+        def log1mexp(mu):
+            if tt.lt(mu, np.log(2)):
+                return pm.math.log(-tt.expm1(-mu))
+            else:
+                return tt.log1p(1 - pm.math.exp(-mu))
+
+        p = logpow(mu, value) - (factln(value) + log1mexp(mu) + mu)
         log_prob = bound(p, mu >= 0, value >= 0)
         # Return zero when mu and value are both zero
         return tt.switch(1 * tt.eq(mu, 0) * tt.eq(value, 0), 0, log_prob)
