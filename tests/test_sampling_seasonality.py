@@ -27,7 +27,7 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
 
         X_t = gen_design_matrix(N)
         betas_intercept = np.random.normal(np.log(3000), 1, size=1)
-        betas_hour = np.sort(np.random.normal(1, 0.5, size=23))
+        betas_hour = np.sort(np.random.normal(2, 0.5, size=23))
         betas_week = np.sort(np.random.normal(1, 0.5, size=6))
 
         betas = tt.concatenate([betas_intercept, betas_hour, betas_week])
@@ -58,7 +58,7 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
             beta_s_intercept = pm.Normal(
                 "beta_s_intercept", np.log(3000), 1, shape=(1,)
             )
-            beta_s_hour = pm.Normal("beta_s_hour", 1, 0.5, shape=(23,))
+            beta_s_hour = pm.Normal("beta_s_hour", 2, 0.5, shape=(23,))
             beta_s_week = pm.Normal("beta_s_week", 1, 0.5, shape=(6,))
 
             beta_s = pm.Deterministic(
@@ -78,6 +78,8 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
             transitions = TransMatConjugateStep([p_0_rv, p_1_rv], S_rv)
             steps = [ffbs, mu_step, transitions]
             trace_ = pm.sample(N, step=steps, return_inferencedata=True, chains=1)
-            posterior = pm.sample_posterior_predictive(trace_.posterior)
 
-        check_metrics_for_sampling(trace_, posterior, simulation)
+        check_metrics_for_sampling(trace_, simulation)
+        betas_np = np.concatenate([betas_intercept, betas_hour, betas_week])
+        beta_pred = trace_.posterior["beta_s"].values[0].mean(0)
+        assert np.allclose(beta_pred, betas_np)

@@ -13,6 +13,8 @@ import pandas as pd
 import patsy
 import scipy.stats
 
+pm.Poisson.subset_args = poisson_subset_args
+
 
 class ZeroTruncatedPoisson(pm.Poisson):
     # adapted from https://gist.github.com/ririw/2e3a4415dc8271bd2d132c476b98b567
@@ -126,6 +128,8 @@ def test_seasonality_ztp_sampling(N: int = 200, off_param=1):
             transitions = TransMatConjugateStep([p_0_rv, p_1_rv], S_rv)
             steps = [ffbs, mu_step, transitions]
             trace_ = pm.sample(N, step=steps, return_inferencedata=True, chains=1)
-            posterior = pm.sample_posterior_predictive(trace_.posterior)
 
-        check_metrics_for_sampling(trace_, posterior, simulation)
+        check_metrics_for_sampling(trace_, simulation)
+        betas_np = np.concatenate([betas_intercept, betas_hour, betas_week])
+        beta_pred = trace_.posterior["beta_s"].values[0].mean(0)
+        assert np.allclose(beta_pred, betas_np)

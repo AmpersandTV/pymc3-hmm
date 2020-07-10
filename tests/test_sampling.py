@@ -4,6 +4,7 @@ from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep
 import pymc3 as pm
 import theano.tensor as tt
 import numpy as np
+from scipy.stats import gamma
 
 
 def test_sampling(N: int = 200, off_param=1):
@@ -51,12 +52,15 @@ def test_sampling(N: int = 200, off_param=1):
         transitions = TransMatConjugateStep([p_0_rv, p_1_rv, p_2_rv], S_rv)
         steps = [ffbs, mu_step, transitions]
         trace_ = pm.sample(N, step=steps, return_inferencedata=True, chains=1)
-        posterior = pm.sample_posterior_predictive(trace_.posterior)
-        check_metrics_for_sampling(trace_, posterior, simulation)
 
+    check_metrics_for_sampling(trace_, simulation)
 
-# def test_PriorRobust():
-#     for j in np.linspace(0.8, 1.2, 3):
-#         print(f'off pram : {j}')
-#         test_sampling(200, j)
-#     assert True
+    count = 1
+    for i in kwargs["mus"]:
+        mu1 = trace_.posterior["mu_" + str(count)].values[0]
+        cdf = gamma.cdf(x=mu1, a=i)
+        p_value = 2 * (1 - np.maximum(cdf, 1 - cdf)).mean(0)
+        count += 1
+        assert p_value > 0.8
+
+    return trace_, simulation
