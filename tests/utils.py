@@ -12,7 +12,7 @@ theano.config.compute_test_value = "warn"
 
 def simulate_poiszero_hmm(
     N,
-    mus=np.r_[10.0, 30.0],
+    mus=[10.0],
     pi_0_a=np.r_[1, 1],
     Gamma=np.r_["0,2", [5, 1], [1, 3]],
     cls=pm.Poisson,
@@ -42,7 +42,39 @@ def simulate_poiszero_hmm(
     return y_test_point, test_model
 
 
-def check_metrics_for_sampling(trace_, posterior, simulation):
+def simulate_hmm_dist(
+    N,
+    arg_dict=np.r_[{"mu": 10.0}],
+    pi_0_a=np.r_[1, 1],
+    Gamma=np.r_["0,2", [5, 1], [1, 3]],
+    cls=pm.Poisson,
+):
+    assert pi_0_a.size == len(arg_dict) + 1 == Gamma.shape[0] == Gamma.shape[1]
+
+    with pm.Model() as test_model:
+        trans_rows = [pm.Dirichlet(f"p_{i}", r) for i, r in enumerate(Gamma)]
+        P_tt = tt.stack(trans_rows)
+        P_rv = pm.Deterministic("P_tt", P_tt)
+
+        pi_0_tt = pm.Dirichlet("pi_0", pi_0_a)
+
+        S_rv = HMMStateSeq("S_t", N, P_rv, pi_0_tt)
+
+        Y_rv = SwitchingProcess(
+            "Y_t",
+            [pm.Constant.dist(0)] + [cls.dist(**mu) for mu in arg_dict],
+            S_rv,
+            observed=np.zeros(N),
+        )
+
+        y_test_point = pm.sample_prior_predictive(samples=1)
+
+    return y_test_point, test_model
+
+
+def check_metrics_for_sampling(
+    trace_, simulation, posterior=None,
+):
     """
     this function is to check the how the posterior generated matches matched with the simulated toy series
 
@@ -64,6 +96,10 @@ def check_metrics_for_sampling(trace_, posterior, simulation):
         - np.sum(np.equal(st_trace == 0, simulation["S_t"] == 0) * 1)
         / len(simulation["S_t"])
     ).values.tolist()
+    assert mean_error_rate <= 0.05
+
+    if posterior is None:
+        return
 
     ## check for positive possion
     positive_index = simulation["Y_t"] > 0
@@ -91,6 +127,5 @@ def check_metrics_for_sampling(trace_, posterior, simulation):
         & (pred_range["T_Y"] >= pred_range["lower"]) * 1
     ) / len(pred_range)
 
-    assert mean_error_rate <= 0.05
     assert mape <= 0.05
     assert pred_ci >= ci_conf - 0.05
