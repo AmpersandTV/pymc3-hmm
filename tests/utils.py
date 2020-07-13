@@ -12,7 +12,7 @@ theano.config.compute_test_value = "warn"
 
 def simulate_poiszero_hmm(
     N,
-    mus=[10.0],
+    mus=np.r_[10.0],
     pi_0_a=np.r_[1, 1],
     Gamma=np.r_["0,2", [5, 1], [1, 3]],
     cls=pm.Poisson,
