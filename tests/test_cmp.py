@@ -1,5 +1,5 @@
 from pymc3_hmm.distributions import HMMStateSeq, SwitchingProcess, broadcast_to
-from pymc3.distributions.dist_math import bound, logpow, factln
+from pymc3.distributions.dist_math import bound
 from pymc3.distributions import draw_values, generate_samples
 from tests.utils import (
     simulate_hmm_dist,
@@ -152,4 +152,5 @@ def test_seasonality_cmp_sampling(N: int = 200, off_param=1):
         check_metrics_for_sampling(trace_, simulation)
         betas_np = np.concatenate([betas_intercept, betas_hour, betas_week])
         beta_pred = trace_.posterior["beta_s"].values[0].mean(0)
-        assert np.allclose(beta_pred, betas_np)
+        beta_mape = abs(beta_pred - betas_np) / betas_np
+        assert beta_mape.mean() < 0.2

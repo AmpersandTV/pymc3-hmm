@@ -82,4 +82,9 @@ def test_seasonality_sampling(N: int = 200, off_param=1):
         check_metrics_for_sampling(trace_, simulation)
         betas_np = np.concatenate([betas_intercept, betas_hour, betas_week])
         beta_pred = trace_.posterior["beta_s"].values[0].mean(0)
-        assert np.allclose(beta_pred, betas_np)
+        beta_mape = abs(beta_pred - betas_np) / betas_np
+        assert beta_mape.mean() < 0.1
+
+
+#%%
+test_seasonality_sampling()
