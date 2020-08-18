@@ -24,6 +24,10 @@ def simulate_poiszero_hmm(
 
         Y_rv = PoissonZeroProcess("Y_t", mu, S_rv, observed=np.zeros(N))
 
-        y_test_point = pm.sample_prior_predictive(samples=1)
+        sample_point = pm.sample_prior_predictive(samples=1)
 
-    return y_test_point, test_model
+        # TODO FIXME: Why is `pm.sample_prior_predictive` adding an extra
+        # dimension to the `Y_rv` result?
+        sample_point["Y_t"] = sample_point["Y_t"].squeeze()
+
+    return sample_point, test_model
