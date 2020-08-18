@@ -16,6 +16,19 @@ from pymc3.distributions.distribution import draw_values, _DrawValuesContext
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[np.int], signature="(n),()->()")
 
 
+def tt_broadcast_arrays(*args):
+    p = max(a.ndim for a in args)
+
+    args = [tt.shape_padleft(a, n_ones=p - a.ndim) if a.ndim < p else a for a in args]
+
+    bcast_shape = [None] * p
+    for i in range(p - 1, -1, -1):
+        non_bcast_args = [tuple(a.shape)[i] for a in args if not a.broadcastable[i]]
+        bcast_shape[i] = tt.max([1] + non_bcast_args)
+
+    return [a * tt.ones(bcast_shape) for a in args]
+
+
 def broadcast_to(x, shape):
     if isinstance(x, np.ndarray):
         return np.broadcast_to(x, shape)  # pragma: no cover
@@ -26,38 +39,43 @@ def broadcast_to(x, shape):
 # In general, these `*_subset_args` functions are such a terrible thing to
 # have to use, but the `Distribution` class simply cannot handle Theano
 # (yes, broadly speaking), so we need to hack around its shortcomings.
-def normal_subset_args(self, shape, idx):
-    return [
-        (broadcast_to(self.mu, shape))[idx],
-        (broadcast_to(self.sigma, shape))[idx],
-    ]
+def distribution_subset_args(self, shape, idx, point=None):
+
+    if point:
+        # Try to get a concrete/NumPy value if a `point` parameter was
+        # given.
+        try:
+            idx = get_test_value(idx)
+        except AttributeError:  # pragma: no cover
+            pass
+
+    res = []
+    for param in self.dist_param_names:
+
+        # Use the (sampled) point, if present
+        if point is None or param not in point:
+            x = getattr(self, param)
+        else:
+            x = point[param]
+
+            # Try to get a concrete/NumPy value if a `point` parameter was
+            # given.
+            try:
+                x = get_test_value(x)
+                shape = get_test_value(shape)
+            except AttributeError:  # pragma: no cover
+                pass
+
+        res.append(broadcast_to(x, shape)[idx])
+
+    return res
 
 
-pm.Normal.subset_args = normal_subset_args
-
-
-def poisson_subset_args(self, shape, idx):
-    return [(broadcast_to(self.mu, shape))[idx]]
-
-
-pm.Poisson.subset_args = poisson_subset_args
-
-
-def negbinom_subset_args(self, shape, idx):
-    return [
-        (broadcast_to(self.mu, shape))[idx],
-        (broadcast_to(self.alpha, shape))[idx],
-    ]
-
-
-pm.NegativeBinomial.subset_args = negbinom_subset_args
-
-
-def constant_subset_args(self, shape, idx):
-    return [(broadcast_to(self.c, shape))[idx]]
-
-
-pm.Constant.subset_args = constant_subset_args
+pm.Distribution.subset_args = distribution_subset_args
+pm.Normal.dist_param_names = ("mu", "sigma")
+pm.Poisson.dist_param_names = ("mu",)
+pm.NegativeBinomial.dist_param_names = ("mu", "alpha")
+pm.Constant.dist_param_names = ("c",)
 
 
 class SwitchingProcess(pm.Distribution):
@@ -75,12 +93,8 @@ class SwitchingProcess(pm.Distribution):
         doesn't provide such a method, you'll have to implement it yourself and
         monkey patch a `Distribution` class.
 
-        Hint: use `types.MethodType` for patches to class instances.
-
         """
-        self.states = tt.as_tensor_variable(states)
-
-        assert self.states.squeeze().ndim < 2
+        self.states = tt.as_tensor_variable(pm.intX(states))
 
         states_tv = get_test_value(self.states)
 
@@ -111,14 +125,10 @@ class SwitchingProcess(pm.Distribution):
             default_dtype = theano.config.floatX
 
             try:
-                self.mean = tt.choose(
-                    self.states.squeeze(),
-                    [
-                        tt.cast(d.mean * tt.ones(d.shape).squeeze(), default_dtype)
-                        for d in self.comp_dists
-                    ],
+                bcast_means = tt_broadcast_arrays(
+                    *([self.states] + [d.mean for d in self.comp_dists])
                 )
-                self.mean = tt.reshape(self.mean, shape)
+                self.mean = tt.choose(self.states, bcast_means)
 
                 if "mean" not in defaults:
                     defaults.append("mean")
@@ -129,14 +139,10 @@ class SwitchingProcess(pm.Distribution):
         dtype = kwargs.pop("dtype", default_dtype)
 
         try:
-            self.mode = tt.choose(
-                self.states.squeeze(),
-                [
-                    tt.cast(d.mode * tt.ones(d.shape).squeeze(), default_dtype)
-                    for d in self.comp_dists
-                ],
+            bcast_modes = tt_broadcast_arrays(
+                *([self.states] + [d.mode for d in self.comp_dists])
             )
-            self.mode = tt.reshape(self.mode, shape)
+            self.mode = tt.choose(self.states, bcast_modes)
 
             if "mode" not in defaults:
                 defaults.append("mode")
@@ -197,7 +203,7 @@ class SwitchingProcess(pm.Distribution):
             else:
                 states = pm.Constant.dist(self.states).random(point=point, size=size)
 
-            states = states.T
+            # states = states.T
 
             samples = np.empty(states.shape)
 
@@ -213,11 +219,11 @@ class SwitchingProcess(pm.Distribution):
                 i_idx = np.where(states == i)
                 i_size = len(i_idx[0])
                 if i_size > 0:
-                    subset_args = dist.subset_args(states.shape, i_idx)
-                    samples[i_idx] = dist.dist(*subset_args).random(point=point).T
+                    subset_args = dist.subset_args(states.shape, i_idx, point=point)
+                    samples[i_idx] = dist.dist(*subset_args).random(point=point)
 
         # PyMC3 expects the dimension order size + shape
-        return samples.T
+        return samples
 
 
 class PoissonZeroProcess(SwitchingProcess):
