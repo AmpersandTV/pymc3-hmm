@@ -72,11 +72,29 @@ def compute_trans_freqs(states, N_states, counts_only=False):
 
 
 def tt_logsumexp(x, axis=None, keepdims=False):
-    # Adapted from https://github.com/Theano/Theano/issues/1563
-    x_max_ = tt.max(x, axis=axis, keepdims=False)
-    x_max = tt.basic.makeKeepDims(x, x_max_, axis)
-    res = tt.log(tt.sum(tt.exp(x - x_max), axis=axis, keepdims=keepdims)) + x_max_
-    return res
+    x_max_ = tt.max(x, axis=axis, keepdims=True)
+
+    if x_max_.ndim > 0:
+        x_max_ = tt.set_subtensor(x_max_[tt.isinf(x_max_).squeeze()], 0.0)
+    elif tt.isinf(x_max_):
+        x_max_ = tt.as_tensor(0.0)
+
+    res = tt.sum(tt.exp(x - x_max_), axis=axis, keepdims=keepdims)
+    res = tt.log(res)
+
+    if not keepdims:
+        # SciPy uses the `axis` keyword here, but Theano doesn't support that.
+        # x_max_ = tt.squeeze(x_max_, axis=axis)
+        axis = np.atleast_1d(axis) if axis is not None else range(x_max_.ndim)
+        x_max_ = x_max_.dimshuffle(
+            [
+                i
+                for i in range(x_max_.ndim)
+                if not x_max_.broadcastable[i] or i not in axis
+            ]
+        )
+
+    return res + x_max_
 
 
 def tt_logdotexp(A, b):
@@ -135,6 +153,7 @@ def tt_broadcast_arrays(*args):
         non_bcast_args = [tuple(a.shape)[i] for a in args if not a.broadcastable[i]]
         bcast_shape[i] = tt.max([1] + non_bcast_args)
 
+    # TODO: This could be very costly?
     return [a * tt.ones(bcast_shape) for a in args]
 
 
@@ -142,4 +161,37 @@ def broadcast_to(x, shape):
     if isinstance(x, np.ndarray):
         return np.broadcast_to(x, shape)  # pragma: no cover
     else:
+        # TODO: This could be very costly?
         return x * tt.ones(shape)
+
+
+def multilogit_inv(ys):
+    """Compute the multilogit-inverse function for both NumPy and Theano arrays.
+
+    In other words, this function maps `M`-many real numbers to an `M +
+    1`-dimensional simplex.  This is a reduced version of the "softmax"
+    function that's suitable for use with multinomial regression.
+
+    Parameters
+    ----------
+    ys: ndarray or TensorVariable
+        An array of "Linear" values (i.e. in `[-inf, inf]`), with length `M`,
+        that are mapped to the `M + 1`-categories logistic scale.  The elements in
+        the array corresponds to categories 1 through M, and the `M + 1`th category
+        is the determined via "normalization".
+
+    """
+    if isinstance(ys, np.ndarray):
+        lib = np
+        lib_logsumexp = logsumexp
+    else:
+        lib = tt
+        lib_logsumexp = tt_logsumexp
+
+    # exp_ys = lib.exp(ys)
+    # res = lib.concatenate([exp_ys, lib.ones(tuple(ys.shape)[:-1] + (1,))], axis=-1)
+    # res = res / (1 + lib.sum(exp_ys, axis=-1))[..., None]
+
+    res = lib.concatenate([ys, lib.zeros(tuple(ys.shape)[:-1] + (1,))], axis=-1)
+    res = lib.exp(res - lib_logsumexp(res, axis=-1, keepdims=True))
+    return res
