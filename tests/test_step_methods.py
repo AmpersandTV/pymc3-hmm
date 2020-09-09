@@ -1,5 +1,7 @@
 import warnings
 
+import pytest
+
 import numpy as np
 import scipy as sp
 
@@ -15,7 +17,16 @@ from pymc3_hmm.utils import compute_steady_state, compute_trans_freqs
 from pymc3_hmm.distributions import PoissonZeroProcess, HMMStateSeq
 from pymc3_hmm.step_methods import ffbs_astep, FFBSStep, TransMatConjugateStep
 
-np.seterr(over="raise", under="raise")
+
+@pytest.fixture()
+def raise_under_overflow():
+    with np.errstate(over="raise", under="raise"):
+        yield
+
+
+# All tests in this module will raise on over- and under-flows (unless local
+# settings dictate otherwise)
+pytestmark = pytest.mark.usefixtures("raise_under_overflow")
 
 
 def test_ffbs_astep():
