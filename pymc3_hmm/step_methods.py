@@ -48,9 +48,8 @@ def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
     # assert M == log_lik.shape[-2]
 
     # Initial state probabilities
-    gamma_0_normed: np.ndarray = gamma_0
-    gamma_0_sum: float = np.sum(gamma_0)
-    gamma_0_normed /= gamma_0_sum
+    gamma_0_normed: np.ndarray = gamma_0.copy()
+    gamma_0_normed /= np.sum(gamma_0)
 
     # "Forward" probabilities
     alphas: np.ndarray = np.empty((M, N), dtype=np.float)
@@ -61,16 +60,19 @@ def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
     # sequence
     Gamma: np.ndarray = np.broadcast_to(Gammas, (N,) + Gammas.shape[-2:])
 
+    lik_n: np.ndarray = np.empty((M,), dtype=np.float)
+    alpha_n: np.ndarray = np.empty((M,), dtype=np.float)
+
     # Forward filtering
     for n in range(N):
         log_lik_n: np.ndarray = log_lik[..., n]
-        lik_n: np.ndarray = np.exp(log_lik_n - log_lik_n.max())
-        Gamma_n: np.ndarray = Gamma[n]
-        alpha_n: np.ndarray = lik_n * np.dot(alpha_nm1, Gamma_n)
+        np.exp(log_lik_n - log_lik_n.max(), out=lik_n)
+        np.dot(alpha_nm1, Gamma[n], out=alpha_n)
+        alpha_n *= lik_n
         alpha_n_sum: float = np.sum(alpha_n)
 
         # Rescale small values
-        if np.all(alpha_n_sum < small):
+        if alpha_n_sum < small:
             alpha_n *= big
 
         alpha_nm1 = alpha_n
@@ -89,10 +91,11 @@ def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
 
     samples[N - 1] = state_np1
 
+    beta_n: np.ndarray = np.empty((M,), dtype=np.float)
+
     # Backward sampling
     for n in range(N - 2, -1, -1):
-        Gamma_np1: np.ndarray = Gamma[n, :, state_np1]
-        beta_n: np.ndarray = alphas[..., n] * Gamma_np1
+        np.multiply(alphas[..., n], Gamma[n, :, state_np1], out=beta_n)
         beta_n /= np.sum(beta_n)
 
         state_np1 = np.searchsorted(beta_n.cumsum(), unif_samples[n])
