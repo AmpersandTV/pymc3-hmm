@@ -2,9 +2,9 @@ name: PyMC3-HMM
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 jobs:
   python-tests:
@@ -38,9 +38,9 @@ jobs:
     - name: Test with pytest
       run: |
         pytest tests --cov=pymc3_hmm --cov-report=xml:./coverage.xml
-    - name: Fetch master for coverage diff
+    - name: Fetch main for coverage diff
       run: |
-        git fetch --no-tags --prune origin master
+        git fetch --no-tags --prune origin main
     - name: Check coverage
       run: |
-        diff-cover ./coverage.xml --compare-branch=origin/master --fail-under=100 --diff-range-notation '..'
+        diff-cover ./coverage.xml --compare-branch=origin/main --fail-under=100 --diff-range-notation '..'
