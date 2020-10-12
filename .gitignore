@@ -134,6 +134,7 @@ target/
 # IPython
 profile_default/
 ipython_config.py
+.ipynb_checkpoints
 
 # pyenv
 .python-version
@@ -178,6 +179,10 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# Pycharm/IntelliJ
+.idea
+*.iml
+
 ### Vim ###
 # Swap
 [._]*.s[a-v][a-z]
@@ -196,5 +201,12 @@ Sessionx.vim
 tags
 # Persistent undo
 [._]*.un~
+
+### OS X ###
+.DS_Store
+
+### Visual Studio / VSCode ###
+.vs/
+.vscode/
 
 # End of https://www.gitignore.io/api/vim,emacs,python
