@@ -12,7 +12,6 @@ setup(
     url="http://github.com/nccmedia/pymc3-hmm",
     maintainer="Brandon T. Willard",
     maintainer_email="brandonwillard+pymc3_hmm@gmail.com",
-    # license="BSD",
     packages=["pymc3_hmm"],
     install_requires=[
         "numpy>=1.18.1",
@@ -29,7 +28,7 @@ setup(
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Science/Research",
         "Intended Audience :: Developers",
-        "License :: OSI Approved :: BSD License",
+        "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
         "Programming Language :: Python",
         "Programming Language :: Python :: 3",
