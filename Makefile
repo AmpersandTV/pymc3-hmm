@@ -14,12 +14,12 @@ help:
 
 conda:  # Set up a conda environment for development.
 	@printf "Creating conda environment...\n"
-	${CONDA} create --yes --name ${PROJECT_NAME}-env python=3.6
+	${CONDA} create --yes --name ${PROJECT_NAME}-env python=3.7
 	( \
 	${CONDA} activate ${PROJECT_NAME}-env; \
 	${PIP} install -U pip; \
+	${PIP} install -U setuptools wheel; \
 	${PIP} install -r requirements.txt; \
-	${PIP} install -r requirements-dev.txt; \
 	${CONDA} deactivate; \
 	)
 	@printf "\n\nConda environment created! \033[1;34mRun \`conda activate ${PROJECT_NAME}-env\` to activate it.\033[0m\n\n\n"
@@ -31,8 +31,8 @@ venv:  # Set up a Python virtual environment for development.
 	( \
 	source ${PROJECT_NAME}-venv/bin/activate; \
 	${PIP} install -U pip; \
+	${PIP} install -U setuptools wheel; \
 	${PIP} install -r requirements.txt; \
-	${PIP} install -r requirements-dev.txt; \
 	deactivate; \
 	)
 	@printf "\n\nVirtual environment created! \033[1;34mRun \`source ${PROJECT_NAME}-venv/bin/activate\` to activate it.\033[0m\n\n\n"
