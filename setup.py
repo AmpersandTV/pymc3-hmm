@@ -9,7 +9,7 @@ setup(
     version=versioneer.get_version(),
     cmdclass=versioneer.get_cmdclass(),
     description="Hidden Markov Models in PyMC3",
-    url="http://github.com/nccmedia/pymc3-hmm",
+    url="http://github.com/AmpersandTV/pymc3-hmm",
     maintainer="Brandon T. Willard",
     maintainer_email="brandonwillard+pymc3_hmm@gmail.com",
     packages=["pymc3_hmm"],

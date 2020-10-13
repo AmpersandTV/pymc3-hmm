@@ -1,5 +1,5 @@
-![Build Status](https://github.com/nccmedia/pymc3-hmm/workflows/PyMC3-HMM/badge.svg)
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/NCCMedia/pymc3-hmm/main?filepath=examples)
+![Build Status](https://github.com/AmpersandTV/pymc3-hmm/workflows/PyMC3-HMM/badge.svg)
+[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/AmpersandTV/pymc3-hmm/main?filepath=examples)
 
 # PyMC3 HMM
 
@@ -12,13 +12,13 @@ Hidden Markov models in [PyMC3](https://github.com/pymc-devs/pymc3).
 - Support for time-varying transition matrices in both the `Distribution` classes and FFBS sampler
 
 
-See the [examples directory](./examples) for demonstrations of the aforementioned features.  You can also use [Binder](https://mybinder.org/v2/gh/NCCMedia/pymc3-hmm/main?filepath=examples) to run the examples yourself.
+See the [examples directory](./examples) for demonstrations of the aforementioned features.  You can also use [Binder](https://mybinder.org/v2/gh/AmpersandTV/pymc3-hmm/main?filepath=examples) to run the examples yourself.
 
 ## Installation
 
 The package name is `pymc3_hmm` and it can be installed with `pip` directly from GitHub
 ```shell
-$ pip install git+https://github.com/nccmedia/pymc3-hmm
+$ pip install git+https://github.com/AmpersandTV/pymc3-hmm
 ```
 
 ## Development
@@ -26,7 +26,7 @@ $ pip install git+https://github.com/nccmedia/pymc3-hmm
 First, pull in the source from GitHub:
 
 ```python
-$ git clone git@github.com:NCCMedia/pymc3-hmm.git
+$ git clone git@github.com:AmpersandTV/pymc3-hmm.git
 ```
 
 Afterward, you can run `make conda` or `make venv` to set up a virtual environment.  After making changes, be sure to run `make black` in order to automatically format the code and then `make check` to run the linters and tests.
