@@ -12,7 +12,7 @@ Hidden Markov models in [PyMC3](https://github.com/pymc-devs/pymc3).
 - Support for time-varying transition matrices in both the `Distribution` classes and FFBS sampler
 
 
-See the [examples directory](./examples) for demonstrations of the aforementioned features.  You can also use [Binder](https://mybinder.org/v2/gh/AmpersandTV/pymc3-hmm/main?filepath=examples) to run the examples yourself.
+See the [examples directory](https://nbviewer.jupyter.org/github/AmpersandTV/pymc3-hmm/tree/main/examples/) for demonstrations of the aforementioned features.  You can also use [Binder](https://mybinder.org/v2/gh/AmpersandTV/pymc3-hmm/main?filepath=examples) to run the examples yourself.
 
 ## Installation
 
