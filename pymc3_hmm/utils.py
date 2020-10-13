@@ -195,3 +195,132 @@ def multilogit_inv(ys):
     res = lib.concatenate([ys, lib.zeros(tuple(ys.shape)[:-1] + (1,))], axis=-1)
     res = lib.exp(res - lib_logsumexp(res, axis=-1, keepdims=True))
     return res
+
+
+def plot_split_timeseries(
+    data,
+    split_freq="W",
+    split_max=5,
+    twin_column_name=None,
+    twin_plot_kwargs=None,
+    figsize=(15, 15),
+    title=None,
+    drawstyle="steps-pre",
+    linewidth=0.5,
+    plot_fn=None,
+    **plot_kwds
+):  # pragma: no cover
+    """Plot long timeseries by splitting them across multiple rows using a given time frequency.
+
+    This function requires the Pandas and Matplotlib libraries.
+
+    Parameters
+    ----------
+    data: DataFrame
+        The timeseries to be plotted.
+    split_freq: str
+        A Pandas time frequency string by which the series is split.
+    split_max: int
+        The maximum number of splits/rows to plot.
+    twin_column_name: str (optional)
+        If this value is non-`None`, it is used to indicate a column in `data`
+        that will be plotted as a twin axis.
+    twin_plot_kwargs: dict (optional)
+        The arguments to `plot` for the twin axis, if any.
+    plot_fn: callable (optional)
+        The function used to plot each split/row.  The expected signature is
+        `(ax, data, **kwargs)`.  The default implementation simply calls
+        `ax.data`.
+
+    Returns
+    -------
+    axes : list of axes
+        The generated plot axes.
+    """
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+    import matplotlib.transforms as mtrans
+
+    if plot_fn is None:
+
+        def plot_fn(ax, data, **kwargs):
+            return ax.plot(data, **kwargs)
+
+    data = pd.DataFrame(data)
+
+    if twin_column_name and len(data.columns) < 2:
+        raise ValueError(
+            "Option `twin_column` is only applicable for a two column `DataFrame`."
+        )
+
+    split_offset = pd.tseries.frequencies.to_offset(split_freq)
+
+    grouper = pd.Grouper(freq=split_offset.freqstr, closed="left")
+    obs_splits = [y_split for n, y_split in data.groupby(grouper)]
+
+    if split_max:
+        obs_splits = obs_splits[:split_max]
+
+    n_partitions = len(obs_splits)
+
+    fig, axes = plt.subplots(
+        nrows=n_partitions, sharey=True, sharex=False, figsize=figsize
+    )
+
+    major_offset = mtrans.ScaledTranslation(0, -10 / 72.0, fig.dpi_scale_trans)
+
+    axes[0].set_title(title)
+
+    return_axes_data = []
+    for i, ax in enumerate(axes):
+        split_data = obs_splits[i]
+
+        if twin_column_name:
+            alt_data = split_data[twin_column_name].to_frame()
+            split_data = split_data.drop(columns=[twin_column_name])
+
+        plot_fn(ax, split_data, drawstyle=drawstyle, linewidth=linewidth, **plot_kwds)
+
+        ax.xaxis.set_minor_locator(mdates.HourLocator(byhour=range(0, 23, 3)))
+        ax.xaxis.set_minor_formatter(mdates.DateFormatter("%H"))
+        ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=range(0, 7, 1)))
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %a"))
+
+        # Shift the major tick labels down
+        for xlabel in ax.xaxis.get_majorticklabels():
+            xlabel.set_transform(xlabel.get_transform() + major_offset)
+
+        legend_lines, legend_labels = ax.get_legend_handles_labels()
+
+        if twin_column_name:
+            twin_plot_kwargs = twin_plot_kwargs or {}
+            alt_ax = ax.twinx()
+            alt_ax._get_lines.get_next_color()
+            alt_ax.plot(alt_data, **twin_plot_kwargs)
+
+            alt_ax.grid(False)
+
+            twin_lines, twin_labels = alt_ax.get_legend_handles_labels()
+            legend_lines += twin_lines
+            legend_labels += twin_labels
+
+            return_axes_data.append(((ax, alt_ax), (split_data, alt_data.index)))
+        else:
+            return_axes_data.append((ax, split_data.index))
+
+        # Make sure Matplotlib shows the true date range and doesn't
+        # choose its own
+        split_start_date = split_offset.rollback(split_data.index.min())
+        split_end_date = split_start_date + split_offset
+
+        assert split_data.index.min() >= split_start_date
+        assert split_data.index.max() <= split_end_date
+
+        ax.set_xlim(split_start_date, split_end_date)
+
+        ax.legend(legend_lines, legend_labels)
+
+    plt.tight_layout()
+
+    return return_axes_data
