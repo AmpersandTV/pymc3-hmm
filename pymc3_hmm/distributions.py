@@ -20,10 +20,13 @@ from pymc3_hmm.utils import (
 )
 
 
-# In general, these `*_subset_args` functions are such a terrible thing to
-# have to use, but the `Distribution` class simply cannot handle Theano
-# (yes, broadly speaking), so we need to hack around its shortcomings.
-def distribution_subset_args(self, shape, idx, point=None):
+def distribution_subset_args(dist, shape, idx, point=None):
+    """Attempt to take subsets a distribution's parameters.
+
+    This is used to effectively "lift" a `Subtensor` `Op` on a distribution.
+    """
+
+    dist_param_names = dist._distr_parameters_for_repr()
 
     if point:
         # Try to get a concrete/NumPy value if a `point` parameter was
@@ -34,11 +37,14 @@ def distribution_subset_args(self, shape, idx, point=None):
             pass
 
     res = []
-    for param in self.dist_param_names:
+    for param in dist_param_names:
 
         # Use the (sampled) point, if present
         if point is None or param not in point:
-            x = getattr(self, param)
+            x = getattr(dist, param, None)
+
+            if x is None:
+                continue
         else:
             x = point[param]
 
@@ -53,13 +59,6 @@ def distribution_subset_args(self, shape, idx, point=None):
         res.append(broadcast_to(x, shape)[idx])
 
     return res
-
-
-pm.Distribution.subset_args = distribution_subset_args
-pm.Normal.dist_param_names = ("mu", "sigma")
-pm.Poisson.dist_param_names = ("mu",)
-pm.NegativeBinomial.dist_param_names = ("mu", "alpha")
-pm.Constant.dist_param_names = ("c",)
 
 
 class SwitchingProcess(pm.Distribution):
@@ -88,8 +87,6 @@ class SwitchingProcess(pm.Distribution):
 
         self.comp_dists = []
         for dist in comp_dists:
-
-            assert hasattr(dist, "subset_args")
 
             d = copy(dist)
             d.shape = bcast_comps.shape
@@ -150,7 +147,7 @@ class SwitchingProcess(pm.Distribution):
                 tt.arange(tt.mul(self.states.shape)[0])[i_mask.ravel()],
                 self.states.shape,
             )
-            subset_dist = dist.dist(*dist.subset_args(obs.shape, i_idx))
+            subset_dist = dist.dist(*distribution_subset_args(dist, obs.shape, i_idx))
             logp_val = tt.set_subtensor(logp_val[i_idx], subset_dist.logp(obs_i))
 
         logp_val.name = "SwitchingProcess_logp"
@@ -203,7 +200,9 @@ class SwitchingProcess(pm.Distribution):
                 i_idx = np.where(states == i)
                 i_size = len(i_idx[0])
                 if i_size > 0:
-                    subset_args = dist.subset_args(states.shape, i_idx, point=point)
+                    subset_args = distribution_subset_args(
+                        dist, states.shape, i_idx, point=point
+                    )
                     samples[i_idx] = dist.dist(*subset_args).random(point=point)
 
         return samples
