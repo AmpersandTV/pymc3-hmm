@@ -14,7 +14,7 @@ def compute_steady_state(P):
     Parameters
     ----------
     P: TensorVariable
-        A transition probability matrix for `K` states with shape `(1, K, K)`.
+        A transition probability matrix for `M` states with shape `(1, M, M)`.
 
     Returns
     -------
@@ -45,6 +45,7 @@ def compute_trans_freqs(states, N_states, counts_only=False):
 
     Returns
     -------
+    res: ndarray
         Unless `counts_only` is `True`, return the empirical state transition
         frequencies; otherwise, return the transition counts for each state.
     """
@@ -72,6 +73,7 @@ def compute_trans_freqs(states, N_states, counts_only=False):
 
 
 def tt_logsumexp(x, axis=None, keepdims=False):
+    """Construct a Theano graph for a log-sum-exp calculation."""
     x_max_ = tt.max(x, axis=axis, keepdims=True)
 
     if x_max_.ndim > 0:
@@ -98,9 +100,9 @@ def tt_logsumexp(x, axis=None, keepdims=False):
 
 
 def tt_logdotexp(A, b):
-    """Compute a numerically stable log-scale dot product for Theano tensors.
+    """Construct a Theano graph for a numerically stable log-scale dot product.
 
-    The result is equivalent to `tt.log(tt.exp(A).dot(tt.exp(b)))`
+    The result is more or less equivalent to `tt.log(tt.exp(A).dot(tt.exp(b)))`
 
     """
     A_bcast = A.dimshuffle(list(range(A.ndim)) + ["x"])
@@ -117,9 +119,9 @@ def tt_logdotexp(A, b):
 
 
 def logdotexp(A, b):
-    """Compute a numerically stable log-scale dot product.
+    """Compute a numerically stable log-scale dot product of NumPy values.
 
-    The result is equivalent to `np.log(np.exp(A).dot(np.exp(b)))`
+    The result is more or less equivalent to `np.log(np.exp(A).dot(np.exp(b)))`
 
     """
     sqz = False
@@ -135,6 +137,21 @@ def logdotexp(A, b):
 
 
 def tt_expand_dims(x, dims):
+    """Expand the shape of an array.
+
+    Insert a new axis that will appear at the `axis` position in the expanded
+    array shape.
+
+    This is a Theano equivalent of `numpy.expand_dims`.
+
+    Parameters
+    ----------
+    a : array_like
+        Input array.
+    axis : int or tuple of ints
+        Position in the expanded axes where the new axis (or axes) is placed.
+
+    """
     dim_range = list(range(x.ndim))
     for d in sorted(np.atleast_1d(dims), reverse=True):
         offset = 0 if d >= 0 else len(dim_range) + 1
@@ -144,6 +161,18 @@ def tt_expand_dims(x, dims):
 
 
 def tt_broadcast_arrays(*args):
+    """Broadcast any number of arrays against each other.
+
+    This is a Theano emulation of `numpy.broadcast_arrays`.  It does *not* use
+    memory views, and--as a result--it will not be nearly as efficient as the
+    NumPy version.
+
+    Parameters
+    ----------
+    `*args` : array_likes
+        The arrays to broadcast.
+
+    """
     p = max(a.ndim for a in args)
 
     args = [tt.shape_padleft(a, n_ones=p - a.ndim) if a.ndim < p else a for a in args]
@@ -158,6 +187,18 @@ def tt_broadcast_arrays(*args):
 
 
 def broadcast_to(x, shape):
+    """Broadcast an array to a new shape.
+
+    This implementation will use NumPy when an `ndarray` is given and an
+    inefficient Theano variant otherwise.
+
+    Parameters
+    ----------
+    x : array_like
+        The array to broadcast.
+    shape : tuple
+        The shape of the desired array.
+    """
     if isinstance(x, np.ndarray):
         return np.broadcast_to(x, shape)  # pragma: no cover
     else:

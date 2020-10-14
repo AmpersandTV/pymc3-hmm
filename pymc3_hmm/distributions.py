@@ -21,9 +21,40 @@ from pymc3_hmm.utils import (
 
 
 def distribution_subset_args(dist, shape, idx, point=None):
-    """Attempt to take subsets a distribution's parameters.
+    """Obtain subsets of a distribution parameters via indexing.
 
-    This is used to effectively "lift" a `Subtensor` `Op` on a distribution.
+    This is used to effectively "lift" slices/`Subtensor` `Op`s up to a
+    distribution's parameters.  In other words, `pm.Normal(mu, sigma)[idx]`
+    becomes `pm.Normal(mu[idx], sigma[idx])`.  In computations, the former
+    requires the entire evaluation of `pm.Normal(mu, sigma)` (e.g. its `.logp`
+    or a sample from `.random`), which could be very complex, while the latter
+    only evaluates the subset of interest.
+
+    XXX: this lifting isn't appropriate for every distribution.  It's fine for
+    most scalar distributions and even some multivariate distributions, but
+    some required functionality is missing in order to handle even the latter.
+
+    Parameters
+    ----------
+    dist : Distribution
+        The distribution object with the parameters to be indexed.
+    shape : tuple or Shape
+        The shape of the distribution's output/support.  This is used
+        to (naively) determine the parameters' broadcasting pattern.
+    idx : ndarray or TensorVariable
+        The indices applied to the parameters of `dist`.
+    point : dict (optional)
+        A dictionary keyed on the `str` names of each parameter in `dist`,
+        which are mapped to NumPy values for the corresponding parameter.  When
+        this is given, the Theano parameters are replaced by their values in the
+        dictionary.
+
+    Returns
+    -------
+    res: list
+        An ordered set of broadcasted and indexed parameters for `dist`.
+
+
     """
 
     dist_param_names = dist._distr_parameters_for_repr()
@@ -65,6 +96,7 @@ class SwitchingProcess(pm.Distribution):
     """A distribution that models a switching process over arbitrary univariate mixtures and a state sequence.
 
     This class is like `Mixture`, but without the mixture weights.
+
     """
 
     def __init__(self, comp_dists, states, *args, **kwargs):
@@ -75,6 +107,15 @@ class SwitchingProcess(pm.Distribution):
         returns a sample for only that subset.  Unfortunately, since PyMC3
         doesn't provide such a method, you'll have to implement it yourself and
         monkey patch a `Distribution` class.
+
+        Parameters
+        ----------
+        comp_dists : list of Distribution
+            A list containing `Distribution` objects for each mixture component.
+            These are essentially the emissions distributions.
+        states : HMMStateSeq
+            The hidden state sequence.  It should have a number of states
+            equal to the size of `comp_dists`.
 
         """
         self.states = tt.as_tensor_variable(pm.intX(states))
@@ -254,9 +295,9 @@ class HMMStateSeq(pm.Discrete):
         gamma_0: TensorVariable
             The initial state probabilities.  The last dimension should be length `M`,
             i.e. the number of distinct states.
-        shape: Tuple[int]
+        shape: tuple of int
             Shape of the state sequence.  The last dimension is `N`, i.e. the
-            length of a state sequence.
+            length of the state sequence(s).
         """
         self.gamma_0 = tt.as_tensor_variable(pm.floatX(gamma_0))
 
@@ -279,7 +320,7 @@ class HMMStateSeq(pm.Discrete):
 
         .. math::
 
-            \int P(S_1 = s_1 \mid S_0) dP(S_0) \prod^{T}_{t=2} P(S_t = s_t \mid S_{t-1} = s_{t-1})
+            \int_{S_0} P(S_1 = s_1 \mid S_0) dP(S_0) \prod^{T}_{t=2} P(S_t = s_t \mid S_{t-1} = s_{t-1})
 
         The first term (i.e. the integral) simply computes the marginal :math:`P(S_1 = s_1)`, so
         another way to express this result is as follows:
