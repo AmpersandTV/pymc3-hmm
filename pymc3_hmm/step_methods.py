@@ -105,7 +105,19 @@ def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
 
 
 class FFBSStep(ArrayStep):
-    r"""Forward-filtering backward-sampling."""
+    r"""Forward-filtering backward-sampling steps.
+
+    For a hidden Markov model with state sequence :math:`S_t`, observations
+    :math:`y_t`, and parameters :math:`\theta`, this step method samples
+
+    .. math::
+
+        S_T &\sim \operatorname{P}\left( S_T \mid y_{1:T}, \theta \right)
+        \\
+        S_t \mid S_{t+1} &\sim \operatorname{P}\left( S_{t+1} \mid S_t, \theta \right)
+            \operatorname{P}\left( S_{t+1} \mid y_{1:T}, \theta \right)
+
+    """
 
     name = "ffbs"
 
@@ -161,19 +173,44 @@ class FFBSStep(ArrayStep):
 
 
 class TransMatConjugateStep(ArrayStep):
-    r"""Conjugate update step for a Dirichlet prior transition matrix."""
+    r"""Conjugate update steps for a transition matrix with Dirichlet distributed rows conditioned on a state sequence.
+
+    For a hidden Markov model given by
+
+    .. math::
+
+        \Gamma_k &\sim \operatorname{Dir}\left( \alpha_k \right),
+        \quad k \in \{1, \dots, M\} \; \text{and} \;
+        \alpha_k \in \mathbb{R}^{M}, \; \Gamma_k \in \mathbb{R}^{M \times M}
+        \\
+        S_t &\sim \operatorname{Cat}\left( \Gamma^\top \pi_t \right)
+
+    this step method samples
+
+    .. math::
+
+        \Gamma_j &\sim \operatorname{P}\left( \Gamma_j \mid S_{1:T}, y_{1:T} \right)
+        \\
+                 &\sim \operatorname{Dir}\left( \alpha_j + N_j \right)
+
+
+    where :math:`N_j \in \mathbb{R}^{M}` are counts of observed state
+    transitions :math:`j \to k` for :math:`k \in \{1, \dots, K\}` conditional
+    on :math:`S_{1:T}`.
+
+    """
 
     name = "trans-mat-conjugate"
 
     def __init__(self, dir_priors, hmm_states, values=None, model=None, rng=None):
-        r"""Initialize a `TransMatConjugateStep` object.
+        """Initialize a `TransMatConjugateStep` object.
 
         Parameters
         ----------
-        dir_priors: list of Dirichlets
+        dir_priors : list of Dirichlets
             State-ordered from-to prior transition probabilities.
-        hmm_states: random variable
-            The HMM states variable using `dir_priors` as its transition matrix.
+        hmm_states : HMMStateSeq
+            The HMM state sequence that uses `dir_priors` as its transition matrix.
         """
 
         model = pm.modelcontext(model)
@@ -206,7 +243,7 @@ class TransMatConjugateStep(ArrayStep):
     @staticmethod
     def competence(var):
 
-        # TODO: Check that dependent term is a conjugate type.
+        # TODO: Check that the dependent term is a conjugate type.
 
         distribution = getattr(var.distribution, "parent_dist", var.distribution)
 
