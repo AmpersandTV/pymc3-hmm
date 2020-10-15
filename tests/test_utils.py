@@ -20,7 +20,21 @@ def test_compute_trans_freqs():
     assert np.array_equal(res, np.c_[[0, 1], [2, 3]])
 
 
-@pytest.mark.parametrize("test_input", [(-10), (np.array([0.0, -10.0, 1e4]))])
+@pytest.mark.parametrize(
+    "test_input",
+    [
+        -10,
+        np.array([0.0, -10.0, 1e4]),
+        np.array(
+            [
+                [[0.95557887], [0.88492326]],
+                [[0.27770323], [0.73042471]],
+                [[0.59677073], [0.22220477]],
+                [[0.39335336], [0.83246557]],
+            ]
+        ),
+    ],
+)
 def test_logsumexp(test_input):
     np_res = sp.special.logsumexp(test_input)
     tt_res = tt_logsumexp(tt.as_tensor_variable(test_input)).eval()
