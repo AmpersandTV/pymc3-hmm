@@ -77,7 +77,7 @@ def tt_logsumexp(x, axis=None, keepdims=False):
     x_max_ = tt.max(x, axis=axis, keepdims=True)
 
     if x_max_.ndim > 0:
-        x_max_ = tt.set_subtensor(x_max_[tt.isinf(x_max_).squeeze()], 0.0)
+        x_max_ = tt.set_subtensor(x_max_[tt.isinf(x_max_)], 0.0)
     elif tt.isinf(x_max_):
         x_max_ = tt.as_tensor(0.0)
 
