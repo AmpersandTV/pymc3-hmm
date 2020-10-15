@@ -16,7 +16,7 @@ setup(
     install_requires=[
         "numpy>=1.18.1",
         "scipy>=1.4.0",
-        "theano-pymc>=1.0.5",
+        "theano-pymc>=1.0.9",
         "pymc3 @ git+https://github.com/pymc-devs/pymc3@master",
     ],
     tests_require=["pytest"],
