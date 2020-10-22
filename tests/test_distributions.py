@@ -1,3 +1,5 @@
+import pytest
+
 import numpy as np
 
 import pymc3 as pm
@@ -359,11 +361,17 @@ def test_PoissonZeroProcess_random():
 
     test_states = np.c_[0, 0, 1, 1, 0, 1].T
     test_dist = PoissonZeroProcess.dist(test_mus, test_states)
-    assert np.array_equal(test_dist.shape, test_states.shape)
+    # There are six Poisson means and six length one time/state sequence
+    # dimensions; the result should broadcast the *state sequence* along the
+    # six Poisson means.
+    assert np.array_equal(test_dist.shape, (6, 6))
     test_sample = test_dist.random()
-    # TODO: This seems bad, but also what PyMC3 would do
     assert np.array_equal(test_sample.shape, test_states.squeeze().shape)
     assert np.all(test_sample[..., test_states.squeeze() > 0] > 0)
+
+    test_states = np.c_[0, 0, 1, 1, 0, 1]
+    test_dist = PoissonZeroProcess.dist(test_mus, test_states)
+    assert np.array_equal(test_dist.shape, test_states.shape)
 
     test_states = np.r_[0, 0, 1, 1, 0, 1]
     test_sample = PoissonZeroProcess.dist(10.0, test_states).random(size=3)
@@ -450,6 +458,27 @@ def test_SwitchingProcess():
     assert np.all(50 < test_sample[test_states == 1])
     assert np.all(test_sample[test_states == 1] < 150)
     assert np.all(900 < test_sample[test_states == 2])
+
+    # Make sure we can use a large number of distributions in the mixture
+    test_states = np.ones(50)
+    test_dists = [pm.Constant.dist(i) for i in range(50)]
+    test_dist = SwitchingProcess.dist(test_dists, test_states)
+    assert np.array_equal(test_dist.shape, test_states.shape)
+
+    with pytest.raises(TypeError):
+        SwitchingProcess.dist([1], test_states)
+
+    with theano.change_flags(compute_test_value="off"):
+        # Test for the case when a default can't be computed
+        test_dist = pm.Poisson.dist(tt.scalar())
+
+        # Confirm that there's no default
+        with pytest.raises(AttributeError):
+            test_dist.default()
+
+        # Let it try to sample using `Distribution.random` and fail
+        with pytest.raises(ValueError):
+            SwitchingProcess.dist([test_dist], test_states)
 
 
 def test_subset_args():

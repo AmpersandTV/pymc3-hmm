@@ -92,6 +92,21 @@ def distribution_subset_args(dist, shape, idx, point=None):
     return res
 
 
+def get_and_check_comp_value(x):
+    if isinstance(x, pm.Distribution):
+        try:
+            return x.default()
+        except AttributeError:
+            pass
+
+        return x.random()
+    else:
+        raise TypeError(
+            "Component distributions must be PyMC3 Distributions. "
+            "Got {}".format(type(x))
+        )
+
+
 class SwitchingProcess(pm.Distribution):
     """A distribution that models a switching process over arbitrary univariate mixtures and a state sequence.
 
@@ -123,15 +138,13 @@ class SwitchingProcess(pm.Distribution):
         states_tv = get_test_value(self.states)
 
         bcast_comps = np.broadcast(
-            states_tv, *[d.sample() if hasattr(d, "sample") else d for d in comp_dists]
+            states_tv, *[get_and_check_comp_value(x) for x in comp_dists[:31]]
         )
 
         self.comp_dists = []
         for dist in comp_dists:
-
             d = copy(dist)
             d.shape = bcast_comps.shape
-
             self.comp_dists.append(d)
 
         # TODO: Not sure why we would allow users to set the shape if we're
