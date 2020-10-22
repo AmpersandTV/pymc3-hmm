@@ -10,7 +10,7 @@ from theano.gof.op import get_test_value as test_value
 
 from pymc3.step_methods.arraystep import ArrayStep, Competence
 
-from pymc3_hmm.distributions import HMMStateSeq
+from pymc3_hmm.distributions import DiscreteMarkovChain
 from pymc3_hmm.utils import compute_trans_freqs
 
 
@@ -164,7 +164,7 @@ class FFBSStep(ArrayStep):
     def competence(var):
         distribution = getattr(var.distribution, "parent_dist", var.distribution)
 
-        if isinstance(distribution, HMMStateSeq):
+        if isinstance(distribution, DiscreteMarkovChain):
             return Competence.IDEAL
         # elif isinstance(distribution, pm.Bernoulli) or (var.dtype in pm.bool_types):
         #     return Competence.COMPATIBLE
@@ -209,7 +209,7 @@ class TransMatConjugateStep(ArrayStep):
         ----------
         dir_priors : list of Dirichlets
             State-ordered from-to prior transition probabilities.
-        hmm_states : HMMStateSeq
+        hmm_states : DiscreteMarkovChain
             The HMM state sequence that uses `dir_priors` as its transition matrix.
         """
 

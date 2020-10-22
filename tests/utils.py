@@ -4,7 +4,7 @@ import theano.tensor as tt
 
 import pymc3 as pm
 
-from pymc3_hmm.distributions import PoissonZeroProcess, HMMStateSeq
+from pymc3_hmm.distributions import PoissonZeroProcess, DiscreteMarkovChain
 
 
 def simulate_poiszero_hmm(
@@ -20,7 +20,7 @@ def simulate_poiszero_hmm(
 
         pi_0_tt = pm.Dirichlet("pi_0", pi_0_a)
 
-        S_rv = HMMStateSeq("S_t", P_rv, pi_0_tt, shape=N)
+        S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=N)
 
         Y_rv = PoissonZeroProcess("Y_t", mu, S_rv, observed=np.zeros(N))
 

@@ -14,7 +14,7 @@ from theano.gof.op import get_test_value
 from tests.utils import simulate_poiszero_hmm
 
 from pymc3_hmm.utils import compute_steady_state, compute_trans_freqs
-from pymc3_hmm.distributions import PoissonZeroProcess, HMMStateSeq
+from pymc3_hmm.distributions import PoissonZeroProcess, DiscreteMarkovChain
 from pymc3_hmm.step_methods import ffbs_astep, FFBSStep, TransMatConjugateStep
 
 
@@ -106,7 +106,7 @@ def test_FFBSStep():
 
         pi_0_tt = compute_steady_state(P_rv)
 
-        S_rv = HMMStateSeq("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
+        S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
 
         Y_rv = PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
 
@@ -140,7 +140,7 @@ def test_FFBSStep_extreme():
 
         pi_0_tt = poiszero_sim["pi_0"]
 
-        S_rv = HMMStateSeq("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
+        S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
 
         # This prior is very far from the true value...
         E_mu, Var_mu = 10.0, 1000.0
@@ -198,7 +198,7 @@ def test_TransMatConjugateStep():
 
         pi_0_tt = compute_steady_state(P_rv)
 
-        S_rv = HMMStateSeq("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
+        S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
 
         Y_rv = PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
 

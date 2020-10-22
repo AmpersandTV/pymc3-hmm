@@ -8,29 +8,35 @@ import theano.tensor as tt
 from tests.utils import simulate_poiszero_hmm
 from pymc3_hmm.distributions import (
     PoissonZeroProcess,
-    HMMStateSeq,
+    DiscreteMarkovChain,
     SwitchingProcess,
     distribution_subset_args,
 )
 
 
-def test_HMMStateSeq_random():
+def test_DiscreteMarkovChain_random():
     # A single transition matrix and initial probabilities vector for each
     # element in the state sequence
     test_Gamma = np.array([[[1.0, 0.0], [0.0, 1.0]]])
     test_gamma_0 = np.r_[0.0, 1.0]
-    test_sample = HMMStateSeq.dist(test_Gamma, test_gamma_0, shape=10).random()
+    test_sample = DiscreteMarkovChain.dist(test_Gamma, test_gamma_0, shape=10).random()
     assert np.all(test_sample == 1)
 
-    test_sample = HMMStateSeq.dist(test_Gamma, 1.0 - test_gamma_0, shape=10).random()
+    test_sample = DiscreteMarkovChain.dist(
+        test_Gamma, 1.0 - test_gamma_0, shape=10
+    ).random()
     assert np.all(test_sample == 0)
-    test_sample = HMMStateSeq.dist(test_Gamma, test_gamma_0, shape=10).random(size=12)
+    test_sample = DiscreteMarkovChain.dist(test_Gamma, test_gamma_0, shape=10).random(
+        size=12
+    )
     assert test_sample.shape == (
         12,
         10,
     )
 
-    test_sample = HMMStateSeq.dist(test_Gamma, test_gamma_0, shape=10).random(size=2)
+    test_sample = DiscreteMarkovChain.dist(test_Gamma, test_gamma_0, shape=10).random(
+        size=2
+    )
     assert np.array_equal(
         test_sample, np.stack([np.ones(10), np.ones(10)], 0).astype(int)
     )
@@ -39,7 +45,9 @@ def test_HMMStateSeq_random():
     # samples
     test_Gamma = np.array([[[0.8, 0.2], [0.2, 0.8]]])
     test_gamma_0 = np.r_[0.2, 0.8]
-    test_sample = HMMStateSeq.dist(test_Gamma, test_gamma_0, shape=10).random(size=2)
+    test_sample = DiscreteMarkovChain.dist(test_Gamma, test_gamma_0, shape=10).random(
+        size=2
+    )
     # TODO: Fix the seed, and make sure there's at least one 0 and 1?
     assert test_sample.shape == (2, 10)
 
@@ -49,7 +57,7 @@ def test_HMMStateSeq_random():
         [np.array([[[1.0, 0.0], [0.0, 1.0]]]), np.array([[[1.0, 0.0], [0.0, 1.0]]])]
     )
     test_gamma_0 = np.r_[0.0, 1.0]
-    test_dist = HMMStateSeq.dist(test_Gamma, test_gamma_0, shape=(2, 10))
+    test_dist = DiscreteMarkovChain.dist(test_Gamma, test_gamma_0, shape=(2, 10))
     test_sample = test_dist.random()
     assert np.array_equal(
         test_sample, np.stack([np.ones(10), np.ones(10)], 0).astype(int)
@@ -71,7 +79,7 @@ def test_HMMStateSeq_random():
         [np.array([[[1.0, 0.0], [0.0, 1.0]]]), np.array([[[1.0, 0.0], [0.0, 1.0]]])]
     )
     test_gamma_0 = np.stack([np.r_[0.0, 1.0], np.r_[1.0, 0.0]])
-    test_dist = HMMStateSeq.dist(test_Gamma, test_gamma_0, shape=(2, 10))
+    test_dist = DiscreteMarkovChain.dist(test_Gamma, test_gamma_0, shape=(2, 10))
     test_sample = test_dist.random()
     assert np.array_equal(
         test_sample, np.stack([np.ones(10), np.zeros(10)], 0).astype(int)
@@ -99,7 +107,7 @@ def test_HMMStateSeq_random():
     )
     test_gamma_0 = np.r_[1, 0]
 
-    test_dist = HMMStateSeq.dist(test_Gamma, test_gamma_0, shape=3)
+    test_dist = DiscreteMarkovChain.dist(test_Gamma, test_gamma_0, shape=3)
     test_sample = test_dist.random()
     assert np.array_equal(test_sample, np.r_[1, 0, 0])
 
@@ -120,7 +128,7 @@ def test_HMMStateSeq_random():
     )
     test_gamma_0 = np.array([[1, 0], [0, 1]])
 
-    test_dist = HMMStateSeq.dist(test_Gamma, test_gamma_0, shape=(2, 3))
+    test_dist = DiscreteMarkovChain.dist(test_Gamma, test_gamma_0, shape=(2, 3))
     test_sample = test_dist.random()
     assert np.array_equal(test_sample, np.array([[1, 0, 0], [0, 1, 1]]))
 
@@ -150,7 +158,7 @@ def test_HMMStateSeq_random():
     )
     test_gamma_0 = np.array([[1, 0], [0, 1]])
 
-    test_dist = HMMStateSeq.dist(test_Gamma, test_gamma_0, shape=(2, 3))
+    test_dist = DiscreteMarkovChain.dist(test_Gamma, test_gamma_0, shape=(2, 3))
     test_sample = test_dist.random()
     assert np.array_equal(test_sample, np.array([[1, 0, 0], [1, 1, 0]]))
 
@@ -162,7 +170,7 @@ def test_HMMStateSeq_random():
     )
 
 
-def test_HMMStateSeq_point():
+def test_DiscreteMarkovChain_point():
     test_Gammas = tt.as_tensor_variable(np.array([[[1.0, 0.0], [0.0, 1.0]]]))
 
     with pm.Model():
@@ -171,20 +179,20 @@ def test_HMMStateSeq_point():
         test_gamma_0 = pm.Dirichlet("gamma_0", np.r_[1.0, 1000.0])
         test_point = {"gamma_0": np.r_[1.0, 0.0]}
         assert np.all(
-            HMMStateSeq.dist(test_Gammas, test_gamma_0, shape=10).random(
+            DiscreteMarkovChain.dist(test_Gammas, test_gamma_0, shape=10).random(
                 point=test_point
             )
             == 0
         )
         assert np.all(
-            HMMStateSeq.dist(test_Gammas, 1.0 - test_gamma_0, shape=10).random(
+            DiscreteMarkovChain.dist(test_Gammas, 1.0 - test_gamma_0, shape=10).random(
                 point=test_point
             )
             == 1
         )
 
 
-def test_HMMStateSeq_logp():
+def test_DiscreteMarkovChain_logp():
     theano.config.compute_test_value = "warn"
 
     # A single transition matrix and initial probabilities vector for each
@@ -193,7 +201,9 @@ def test_HMMStateSeq_logp():
     test_gamma_0 = np.r_[1.0, 0.0]
     test_obs = np.r_[1, 0, 1, 0]
 
-    test_dist = HMMStateSeq.dist(test_Gammas, test_gamma_0, shape=test_obs.shape[-1])
+    test_dist = DiscreteMarkovChain.dist(
+        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
+    )
     test_logp_tt = test_dist.logp(test_obs)
     assert test_logp_tt.eval() == 0
 
@@ -213,7 +223,9 @@ def test_HMMStateSeq_logp():
 
     test_obs = np.r_[1, 0, 1, 0]
 
-    test_dist = HMMStateSeq.dist(test_Gammas, test_gamma_0, shape=test_obs.shape[-1])
+    test_dist = DiscreteMarkovChain.dist(
+        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
+    )
 
     test_logp_tt = test_dist.logp(test_obs)
 
@@ -226,7 +238,9 @@ def test_HMMStateSeq_logp():
 
     test_gamma_0 = np.r_[0.5, 0.5]
 
-    test_dist = HMMStateSeq.dist(test_Gammas, test_gamma_0, shape=test_obs.shape[-1])
+    test_dist = DiscreteMarkovChain.dist(
+        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
+    )
 
     test_logp_tt = test_dist.logp(test_obs)
 
@@ -248,7 +262,9 @@ def test_HMMStateSeq_logp():
 
     test_gamma_0 = np.r_[0.5, 0.5]
 
-    test_dist = HMMStateSeq.dist(test_Gammas, test_gamma_0, shape=test_obs.shape[-1])
+    test_dist = DiscreteMarkovChain.dist(
+        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
+    )
 
     test_logp_tt = test_dist.logp(test_obs)
 
@@ -278,7 +294,9 @@ def test_HMMStateSeq_logp():
 
     test_gamma_0 = np.r_[0.5, 0.5]
 
-    test_dist = HMMStateSeq.dist(test_Gammas, test_gamma_0, shape=test_obs.shape[-1])
+    test_dist = DiscreteMarkovChain.dist(
+        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
+    )
 
     test_logp_tt = test_dist.logp(test_obs)
 
@@ -289,7 +307,9 @@ def test_HMMStateSeq_logp():
     # broadcasting--and two state sequences
     test_gamma_0 = np.array([[0.5, 0.5], [0.5, 0.5]])
 
-    test_dist = HMMStateSeq.dist(test_Gammas, test_gamma_0, shape=test_obs.shape[-1])
+    test_dist = DiscreteMarkovChain.dist(
+        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
+    )
 
     test_logp_tt = test_dist.logp(test_obs)
 
@@ -312,7 +332,9 @@ def test_HMMStateSeq_logp():
 
     test_obs = np.r_[1, 0, 1, 0]
 
-    test_dist = HMMStateSeq.dist(test_Gammas, test_gamma_0, shape=test_obs.shape[-1])
+    test_dist = DiscreteMarkovChain.dist(
+        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
+    )
 
     test_logp_tt = test_dist.logp(test_obs)
 
@@ -385,7 +407,7 @@ def test_PoissonZeroProcess_point():
     assert np.all(test_sample[..., test_states > 0] < 200)
 
 
-def test_random_PoissonZeroProcess_HMMStateSeq():
+def test_random_PoissonZeroProcess_DiscreteMarkovChain():
     poiszero_sim, test_model = simulate_poiszero_hmm(30, 5000)
 
     y_test = poiszero_sim["Y_t"].squeeze()
