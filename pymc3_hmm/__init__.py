@@ -1,4 +1,4 @@
-from pymc3_hmm.distributions import HMMStateSeq, SwitchingProcess
+from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep
 from pymc3_hmm.utils import compute_steady_state
 

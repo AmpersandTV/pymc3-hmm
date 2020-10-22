@@ -6,7 +6,7 @@
 Hidden Markov models in [PyMC3](https://github.com/pymc-devs/pymc3).
 
 ### Features
-- Fully implemented PyMC3 `Distribution` classes for HMM state sequences (`HMMStateSeq`) and mixtures that are driven by them (`SwitchingProcess`)
+- Fully implemented PyMC3 `Distribution` classes for HMM state sequences (`DiscreteMarkovChain`) and mixtures that are driven by them (`SwitchingProcess`)
 - A forward-filtering backward-sampling (FFBS) implementation (`FFBSStep`) that works with NUTS&mdash;or any other PyMC3 sampler
 - A conjugate Dirichlet transition matrix sampler (`TransMatConjugateStep`)
 - Support for time-varying transition matrices in the FFBS sampler and all the relevant `Distribution` classes

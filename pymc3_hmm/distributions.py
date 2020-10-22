@@ -128,7 +128,7 @@ class SwitchingProcess(pm.Distribution):
         comp_dists : list of Distribution
             A list containing `Distribution` objects for each mixture component.
             These are essentially the emissions distributions.
-        states : HMMStateSeq
+        states : DiscreteMarkovChain
             The hidden state sequence.  It should have a number of states
             equal to the size of `comp_dists`.
 
@@ -286,16 +286,17 @@ class PoissonZeroProcess(SwitchingProcess):
         super().__init__([pm.Constant.dist(0), pm.Poisson.dist(mu)], states, **kwargs)
 
 
-class HMMStateSeq(pm.Discrete):
-    """A hidden markov state sequence distribution.
+class DiscreteMarkovChain(pm.Discrete):
+    """A first-order discrete Markov chain distribution.
 
     This class characterizes vector random variables consisting of state
-    indicator values (i.e. `0` to `M - 1`).
+    indicator values (i.e. `0` to `M - 1`) that are driven by a discrete Markov
+    chain.
 
     """
 
     def __init__(self, Gamma, gamma_0, shape, **kwargs):
-        """Initialize an `HMMStateSeq` object.
+        """Initialize an `DiscreteMarkovChain` object.
 
         Parameters
         ----------
@@ -326,7 +327,7 @@ class HMMStateSeq(pm.Discrete):
         super().__init__(shape=shape, **kwargs)
 
     def logp(self, states):
-        r"""Create a Theano graph that computes the log-likelihood for a state sequence.
+        r"""Create a Theano graph that computes the log-likelihood for a discrete Markov chain.
 
         This is the log-likelihood for the joint distribution of states, :math:`S_t`, conditional
         on state samples, :math:`s_t`, given by the following:
@@ -396,12 +397,12 @@ class HMMStateSeq(pm.Discrete):
         logp_S_1T = tt.log(P_S_2T[obs_slices])
 
         res = logp_S_1 + tt.sum(logp_S_1T, axis=-1)
-        res.name = "HMMStateSeq_logp"
+        res.name = "DiscreteMarkovChain_logp"
 
         return res
 
     def random(self, point=None, size=None):
-        """Sample from this distribution conditional on a given set of values.
+        """Sample from a discrete Markov chain conditional on a given set of values.
 
         Parameters
         ----------
