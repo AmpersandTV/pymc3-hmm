@@ -184,6 +184,10 @@ def test_FFBSStep_extreme():
 
 def test_TransMatConjugateStep():
 
+    with pm.Model() as test_model, pytest.raises(ValueError):
+        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+        transmat = TransMatConjugateStep(p_0_rv)
+
     np.random.seed(2032)
 
     poiszero_sim, _ = simulate_poiszero_hmm(30, 150)
@@ -203,15 +207,12 @@ def test_TransMatConjugateStep():
         Y_rv = PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
 
     with test_model:
-        transmat = TransMatConjugateStep([p_0_rv, p_1_rv], S_rv)
+        transmat = TransMatConjugateStep(P_rv)
 
     test_point = test_model.test_point.copy()
     test_point["S_t"] = (y_test > 0).astype(int)
 
     res = transmat.step(test_point)
-
-    # states = res['S_t']
-    # trans_freq = compute_trans_freqs(states, 2)
 
     p_0_smpl = get_test_value(
         p_0_rv.distribution.transform.backward(res[p_0_rv.transformed.name])
@@ -228,5 +229,79 @@ def test_TransMatConjugateStep():
     )
     true_trans_mat = true_trans_mat / true_trans_mat.sum(0)[..., None]
 
-    # TODO: Come up with a good test.
     assert np.allclose(sampled_trans_mat, true_trans_mat, atol=0.3)
+
+
+def test_TransMatConjugateStep_subtensors():
+
+    # Confirm that Dirichlet/non-Dirichlet mixed rows can be
+    # parsed
+    with pm.Model():
+        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
+
+        p_0_rv = tt.as_tensor([0, 0, 1])
+        p_1_rv = tt.zeros(3)
+        p_1_rv = tt.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
+        p_2_rv = tt.zeros(3)
+        p_2_rv = tt.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
+
+        P_tt = tt.stack([p_0_rv, p_1_rv, p_2_rv])
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
+        S_rv = DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
+
+        transmat = TransMatConjugateStep(P_rv)
+
+    assert transmat.row_remaps == {0: 1, 1: 2}
+    exp_slices = {0: np.r_[0, 2], 1: np.r_[1, 2]}
+    assert exp_slices.keys() == transmat.row_slices.keys()
+    assert all(
+        np.array_equal(transmat.row_slices[i], exp_slices[i]) for i in exp_slices.keys()
+    )
+
+    # Same thing, just with some manipulations of the transition matrix
+    with pm.Model():
+        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
+
+        p_0_rv = tt.as_tensor([0, 0, 1])
+        p_1_rv = tt.zeros(3)
+        p_1_rv = tt.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
+        p_2_rv = tt.zeros(3)
+        p_2_rv = tt.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
+
+        P_tt = tt.horizontal_stack(
+            p_0_rv[..., None], p_1_rv[..., None], p_2_rv[..., None]
+        )
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt.T))
+        S_rv = DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
+
+        transmat = TransMatConjugateStep(P_rv)
+
+    assert transmat.row_remaps == {0: 1, 1: 2}
+    exp_slices = {0: np.r_[0, 2], 1: np.r_[1, 2]}
+    assert exp_slices.keys() == transmat.row_slices.keys()
+    assert all(
+        np.array_equal(transmat.row_slices[i], exp_slices[i]) for i in exp_slices.keys()
+    )
+
+    # Use an observed `DiscreteMarkovChain` and check the conjugate results
+    with pm.Model():
+        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
+
+        p_0_rv = tt.as_tensor([0, 0, 1])
+        p_1_rv = tt.zeros(3)
+        p_1_rv = tt.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
+        p_2_rv = tt.zeros(3)
+        p_2_rv = tt.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
+
+        P_tt = tt.horizontal_stack(
+            p_0_rv[..., None], p_1_rv[..., None], p_2_rv[..., None]
+        )
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt.T))
+        S_rv = DiscreteMarkovChain(
+            "S_t", P_rv, np.r_[1, 0, 0], shape=(4,), observed=np.r_[0, 1, 0, 2]
+        )
+
+        transmat = TransMatConjugateStep(P_rv)
