@@ -1,18 +1,23 @@
-import numpy as np
-
-import theano.tensor as tt
-
-import pymc3 as pm
-
 from itertools import chain
 
-from theano.gof.op import get_test_value as test_value
-
+import numpy as np
+import pymc3 as pm
+import theano.scalar as ts
+import theano.tensor as tt
 from pymc3.step_methods.arraystep import ArrayStep, Competence
+from pymc3.util import get_untransformed_name
+from theano.compile import optdb
+from theano.gof.fg import FunctionGraph
+from theano.gof.graph import Variable
+from theano.gof.graph import inputs as tt_inputs
+from theano.gof.op import get_test_value as test_value
+from theano.gof.opt import OpRemove
+from theano.gof.optdb import Query
+from theano.tensor.subtensor import AdvancedIncSubtensor1
+from theano.tensor.var import TensorConstant
 
 from pymc3_hmm.distributions import DiscreteMarkovChain
 from pymc3_hmm.utils import compute_trans_freqs
-
 
 big: np.float = 1e20
 small: np.float = 1.0 / big
@@ -198,40 +203,197 @@ class TransMatConjugateStep(ArrayStep):
     transitions :math:`j \to k` for :math:`k \in \{1, \dots, K\}` conditional
     on :math:`S_{1:T}`.
 
+    Dirichlet priors can also be embedded in larger transition matrices through
+    `theano.tensor.set_subtensor` `Op`s.  See
+    `TransMatConjugateStep._set_row_mappings`.
+
     """
 
     name = "trans-mat-conjugate"
 
-    def __init__(self, dir_priors, hmm_states, values=None, model=None, rng=None):
-        """Initialize a `TransMatConjugateStep` object.
-
-        Parameters
-        ----------
-        dir_priors : list of Dirichlets
-            State-ordered from-to prior transition probabilities.
-        hmm_states : DiscreteMarkovChain
-            The HMM state sequence that uses `dir_priors` as its transition matrix.
-        """
+    def __init__(self, model_vars, values=None, model=None, rng=None):
+        """Initialize a `TransMatConjugateStep` object."""
 
         model = pm.modelcontext(model)
 
-        dir_priors = list(chain.from_iterable([pm.inputvars(d) for d in dir_priors]))
+        if isinstance(model_vars, Variable):
+            model_vars = [model_vars]
+
+        model_vars = list(chain.from_iterable([pm.inputvars(v) for v in model_vars]))
+
+        # TODO: Are the rows in this matrix our `dir_priors`?
+        dir_priors = []
+        self.dir_priors_untrans = []
+        for d in model_vars:
+            untrans_var = model.named_vars[get_untransformed_name(d.name)]
+            if isinstance(untrans_var.distribution, pm.Dirichlet):
+                self.dir_priors_untrans.append(untrans_var)
+                dir_priors.append(d)
+
+        state_seqs = [
+            v
+            for v in model.vars + model.observed_RVs
+            if isinstance(v.distribution, DiscreteMarkovChain)
+            and all(d in tt_inputs([v.distribution.Gammas]) for d in dir_priors)
+        ]
+
+        if not self.dir_priors_untrans or not len(state_seqs) == 1:
+            raise ValueError(
+                "This step method requires a set of Dirichlet priors"
+                " that comprise a single transition matrix"
+            )
+
+        (state_seq,) = state_seqs
+
+        Gamma = state_seq.distribution.Gammas
+
+        self._set_row_mappings(Gamma, dir_priors, model)
+
+        if len(self.row_remaps) != len(dir_priors):
+            raise TypeError(
+                "The Dirichlet priors could not be found"
+                " in the graph for {}".format(state_seq.distribution.Gammas)
+            )
+
+        if state_seq in model.observed_RVs:
+            self.state_seq_obs = np.asarray(state_seq.distribution.data)
 
         self.rng = rng
         self.dists = list(dir_priors)
-        self.hmm_states = hmm_states.name
-        # TODO: Perform a consistency check between `hmm_states.Gamma` and
-        # `dir_priors`.
+        self.state_seq_name = state_seq.name
 
         super().__init__(dir_priors, [], allvars=True)
 
+    def _set_row_mappings(self, Gamma, dir_priors, model):
+        """Create maps from Dirichlet priors parameters to rows and slices in the transition matrix.
+
+        These maps are needed when a transition matrix isn't simply comprised
+        of Dirichlet prior rows, but--instead--slices of Dirichlet priors.
+
+        Consider the following:
+
+        .. code-block:: python
+
+            with pm.Model():
+                d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+                d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
+
+                p_0_rv = tt.as_tensor([0, 0, 1])
+                p_1_rv = tt.zeros(3)
+                p_1_rv = tt.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
+                p_2_rv = tt.zeros(3)
+                p_2_rv = tt.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
+
+                P_tt = tt.stack([p_0_rv, p_1_rv, p_2_rv])
+
+        The transition matrix `P_tt` has Dirichlet priors in only two of its
+        three rows, and--even then--they're only present in parts of two rows.
+
+        In this example, we need to know that Dirichlet prior 0, i.e. `d_0_rv`,
+        is mapped to row 1, and prior 1 is mapped to row 2.  Furthermore, we
+        need to know that prior 0 fills columns 0 and 2 in row 1, and prior 1
+        fills columns 1 and 2 in row 2.
+
+        These mappings allow one to embed Dirichlet priors in larger transition
+        matrices with--for instance--fixed transition behavior.
+
+        """
+
+        # Remove unimportant `Op`s from the transition matrix graph
+        Gamma = tt.gof.opt.pre_greedy_local_optimizer(
+            [
+                OpRemove(tt.elemwise.Elemwise(ts.Cast(ts.float32))),
+                OpRemove(tt.elemwise.Elemwise(ts.Cast(ts.float64))),
+                OpRemove(tt.elemwise.Elemwise(ts.identity)),
+            ],
+            Gamma,
+        )
+
+        # Canonicalize the transition matrix graph
+        fg = FunctionGraph(
+            tt_inputs([Gamma] + self.dir_priors_untrans),
+            [Gamma] + self.dir_priors_untrans,
+            clone=True,
+        )
+        canonicalize_opt = optdb.query(Query(include=["canonicalize"]))
+        canonicalize_opt.optimize(fg)
+        Gamma = fg.outputs[0]
+        dir_priors_untrans = fg.outputs[1:]
+        fg.disown()
+
+        Gamma_DimShuffle = Gamma.owner
+
+        if not (isinstance(Gamma_DimShuffle.op, tt.elemwise.DimShuffle)):
+            raise TypeError("The transition matrix should be non-time-varying")
+
+        Gamma_Join = Gamma_DimShuffle.inputs[0].owner
+
+        if not (isinstance(Gamma_Join.op, tt.basic.Join)):
+            raise TypeError(
+                "The transition matrix should be comprised of stacked row vectors"
+            )
+
+        Gamma_rows = Gamma_Join.inputs[1:]
+
+        self.n_rows = len(Gamma_rows)
+
+        # Loop through the rows in the transition matrix's graph and determine
+        # how our transformed Dirichlet RVs map to this transition matrix.
+        self.row_remaps = {}
+        self.row_slices = {}
+        for i, dim_row in enumerate(Gamma_rows):
+            if not dim_row.owner:
+                continue
+
+            # By-pass the `DimShuffle`s applied to the `AdvancedIncSubtensor1`
+            # `Op`s in which we're actually interested
+            gamma_row = dim_row.owner.inputs[0]
+
+            if gamma_row in dir_priors_untrans:
+                # This is a row that's simply a `Dirichlet`
+                j = dir_priors_untrans.index(gamma_row)
+                self.row_remaps[j] = i
+                self.row_slices[j] = slice(None)
+
+            if gamma_row.owner.inputs[1] not in dir_priors_untrans:
+                continue
+
+            # Parts of a row set by a `*Subtensor*` `Op` using a full
+            # `Dirichlet` e.g. `P_row[idx] = dir_rv`
+            j = dir_priors_untrans.index(gamma_row.owner.inputs[1])
+            untrans_dirich = dir_priors_untrans[j]
+
+            if (
+                gamma_row.owner
+                and isinstance(gamma_row.owner.op, AdvancedIncSubtensor1)
+                and gamma_row.owner.inputs[1] == untrans_dirich
+            ):
+                self.row_remaps[j] = i
+
+                rhand_val = gamma_row.owner.inputs[2]
+                if not isinstance(rhand_val, TensorConstant):
+                    # TODO: We could allow more types of `idx` (e.g. slices)
+                    # Currently, `idx` can't be something like `2:5`
+                    raise TypeError(
+                        "Only array indexing allowed for mixed"
+                        " Dirichlet/non-Dirichlet rows"
+                    )
+                self.row_slices[j] = rhand_val.data
+
     def astep(self, point, inputs):
-        states = inputs[self.hmm_states]
-        N_mat = compute_trans_freqs(states, len(self.dists), counts_only=True)
+
+        states = getattr(self, "state_seq_obs", None)
+        if states is None:
+            states = inputs[self.state_seq_name]
+
+        N_mat = compute_trans_freqs(states, self.n_rows, counts_only=True)
 
         trans_res = [
             d.distribution.dist.transform.forward_val(
-                np.random.dirichlet(test_value(d.distribution.dist.a) + N_mat[i])
+                np.random.dirichlet(
+                    test_value(d.distribution.dist.a)
+                    + N_mat[self.row_remaps[i]][self.row_slices[i]]
+                )
             )
             for i, d in enumerate(self.dists)
         ]
