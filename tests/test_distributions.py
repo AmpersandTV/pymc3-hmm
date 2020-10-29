@@ -16,6 +16,19 @@ from pymc3_hmm.distributions import (
 )
 
 
+def test_DiscreteMarkovChain_str():
+    Gammas = tt.as_tensor(np.eye(2)[None, ...], name="Gammas")
+    gamma_0 = tt.as_tensor(np.r_[0, 1], name="gamma_0")
+
+    with pm.Model():
+        test_dist = DiscreteMarkovChain("P_rv", Gammas, gamma_0, shape=(2,))
+
+    assert (
+        str(test_dist)
+        == "P_rv ~ DiscreteMarkovChain(Gammas=Gammas, gamma_0=f(gamma_0))"
+    )
+
+
 def test_DiscreteMarkovChain_random():
     # A single transition matrix and initial probabilities vector for each
     # element in the state sequence

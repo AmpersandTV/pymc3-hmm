@@ -289,7 +289,7 @@ class DiscreteMarkovChain(pm.Discrete):
 
     """
 
-    def __init__(self, Gamma, gamma_0, shape, **kwargs):
+    def __init__(self, Gammas, gamma_0, shape, **kwargs):
         """Initialize an `DiscreteMarkovChain` object.
 
         Parameters
@@ -309,9 +309,9 @@ class DiscreteMarkovChain(pm.Discrete):
         """
         self.gamma_0 = tt.as_tensor_variable(pm.floatX(gamma_0))
 
-        assert Gamma.ndim >= 3
+        assert Gammas.ndim >= 3
 
-        self.Gammas = tt.as_tensor_variable(pm.floatX(Gamma))
+        self.Gammas = tt.as_tensor_variable(pm.floatX(Gammas))
 
         shape = np.atleast_1d(shape)
 
@@ -443,3 +443,6 @@ class DiscreteMarkovChain(pm.Discrete):
                 states[..., n] = state_n
 
             return states
+
+    def _distr_parameters_for_repr(self):
+        return ["Gammas", "gamma_0"]
