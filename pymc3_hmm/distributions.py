@@ -197,14 +197,8 @@ class SwitchingProcess(pm.Distribution):
         for i, dist in enumerate(self.comp_dists):
             i_mask = tt.eq(self.states, i)
             obs_i = obs_tt[i_mask]
-            i_idx = tt.unravel_index(
-                tt.arange(tt.mul(self.states.shape)[0])[i_mask.ravel()],
-                self.states.shape,
-            )
-            subset_dist = dist.dist(*distribution_subset_args(dist, obs.shape, i_idx))
-            logp_val = tt.set_subtensor(logp_val[i_idx], subset_dist.logp(obs_i))
-
-        logp_val.name = "SwitchingProcess_logp"
+            subset_dist = dist.dist(*distribution_subset_args(dist, obs.shape, i_mask))
+            logp_val = tt.set_subtensor(logp_val[i_mask], subset_dist.logp(obs_i))
 
         return logp_val
 

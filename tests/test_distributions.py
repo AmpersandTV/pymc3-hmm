@@ -502,6 +502,19 @@ def test_SwitchingProcess():
         with pytest.raises(ValueError):
             SwitchingProcess.dist([test_dist], test_states)
 
+    # Evaluate multiple observed state sequences in an extreme case
+    test_states = tt.imatrix("states")
+    test_states.tag.test_value = np.zeros((10, 4)).astype("int32")
+    test_dist = SwitchingProcess.dist(
+        [pm.Constant.dist(0), pm.Constant.dist(1)], test_states
+    )
+    test_obs = np.tile(np.arange(4), (10, 1)).astype("int32")
+    test_logp = test_dist.logp(test_obs)
+    exp_logp = np.tile(
+        np.array([0.0] + [-np.inf] * 3, dtype=theano.config.floatX), (10, 1)
+    )
+    assert np.array_equal(test_logp.tag.test_value, exp_logp)
+
 
 def test_subset_args():
 
