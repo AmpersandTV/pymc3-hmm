@@ -4,7 +4,6 @@ import theano.tensor as tt
 
 from scipy.special import logsumexp
 
-
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[np.int], signature="(n),()->()")
 
 
@@ -239,17 +238,17 @@ def multilogit_inv(ys):
 
 
 def plot_split_timeseries(
-    data,
-    split_freq="W",
-    split_max=5,
-    twin_column_name=None,
-    twin_plot_kwargs=None,
-    figsize=(15, 15),
-    title=None,
-    drawstyle="steps-pre",
-    linewidth=0.5,
-    plot_fn=None,
-    **plot_kwds
+        data,
+        split_freq="W",
+        split_max=5,
+        twin_column_name=None,
+        twin_plot_kwargs=None,
+        figsize=(15, 15),
+        title=None,
+        drawstyle="steps-pre",
+        linewidth=0.5,
+        plot_fn=None,
+        **plot_kwds
 ):  # pragma: no cover
     """Plot long timeseries by splitting them across multiple rows using a given time frequency.
 
@@ -284,7 +283,6 @@ def plot_split_timeseries(
     import matplotlib.transforms as mtrans
 
     if plot_fn is None:
-
         def plot_fn(ax, data, **kwargs):
             return ax.plot(data, **kwargs)
 
@@ -323,10 +321,19 @@ def plot_split_timeseries(
 
         plot_fn(ax, split_data, drawstyle=drawstyle, linewidth=linewidth, **plot_kwds)
 
-        ax.xaxis.set_minor_locator(mdates.HourLocator(byhour=range(0, 23, 3)))
-        ax.xaxis.set_minor_formatter(mdates.DateFormatter("%H"))
-        ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=range(0, 7, 1)))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %a"))
+        if split_freq[0].isdigit():
+            freq_str = split_freq
+        else:
+            freq_str = f'1{split_freq}'
+        if pd.to_timedelta(freq_str) / 300 < pd.to_timedelta('1H'):
+            ax.xaxis.set_minor_locator(mdates.HourLocator(byhour=range(0, 23, 3)))
+            ax.xaxis.set_minor_formatter(mdates.DateFormatter("%H"))
+        if pd.to_timedelta(freq_str) / 10 < pd.to_timedelta('1W'):
+            ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=range(0, 7, 1)))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %a"))
+        if pd.to_timedelta(freq_str) / 13 < pd.to_timedelta('30D'):
+            ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=range(1, 12, 1)))
+            ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
 
         # Shift the major tick labels down
         for xlabel in ax.xaxis.get_majorticklabels():
