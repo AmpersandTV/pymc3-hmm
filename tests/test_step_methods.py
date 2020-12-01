@@ -141,9 +141,10 @@ def test_FFBSStep_extreme():
         pi_0_tt = poiszero_sim["pi_0"]
 
         S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
+        S_rv.tag.test_value = (y_test > 0).astype(int)
 
         # This prior is very far from the true value...
-        E_mu, Var_mu = 10.0, 1000.0
+        E_mu, Var_mu = 100.0, 10000.0
         mu_rv = pm.Gamma("mu", E_mu ** 2 / Var_mu, E_mu / Var_mu)
 
         Y_rv = PoissonZeroProcess("Y_t", mu_rv, S_rv, observed=y_test)
@@ -155,7 +156,8 @@ def test_FFBSStep_extreme():
     test_point["p_0_stickbreaking__"] = poiszero_sim["p_0_stickbreaking__"]
     test_point["p_1_stickbreaking__"] = poiszero_sim["p_1_stickbreaking__"]
 
-    res = ffbs.step(test_point)
+    with np.errstate(over="ignore", under="ignore"):
+        res = ffbs.step(test_point)
 
     assert np.array_equal(res["S_t"], poiszero_sim["S_t"])
 
