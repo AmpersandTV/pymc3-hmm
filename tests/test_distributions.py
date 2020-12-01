@@ -23,10 +23,7 @@ def test_DiscreteMarkovChain_str():
     with pm.Model():
         test_dist = DiscreteMarkovChain("P_rv", Gammas, gamma_0, shape=(2,))
 
-    assert (
-        str(test_dist)
-        == "P_rv ~ DiscreteMarkovChain(Gammas=Gammas, gamma_0=f(gamma_0))"
-    )
+    assert str(test_dist) == "P_rv ~ DiscreteMarkovChain"
 
 
 def test_DiscreteMarkovChain_random():
