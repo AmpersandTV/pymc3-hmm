@@ -16,8 +16,8 @@ setup(
     install_requires=[
         "numpy>=1.18.1",
         "scipy>=1.4.0",
-        "theano-pymc==1.0.11",
-        "pymc3 @ git+https://github.com/pymc-devs/pymc3.git@7ff2f499a5c6e3aa608e2632b0cdc96376d2522f",
+        "pymc3>=3.10.0",
+        "theano-pymc>=1.0.11",
     ],
     tests_require=["pytest"],
     long_description=open("README.md").read() if exists("README.md") else "",
