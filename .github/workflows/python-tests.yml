@@ -28,7 +28,7 @@ jobs:
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Lint code
       run: |
-        pylint pymc3_hmm/ tests/
+        pylint -j 1 pymc3_hmm/ tests/
     - name: Check documentation style
       run: |
         pydocstyle pymc3_hmm/
