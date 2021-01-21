@@ -398,8 +398,8 @@ def test_PoissonZeroProcess_random():
     # six Poisson means.
     assert np.array_equal(test_dist.shape, (6, 6))
     test_sample = test_dist.random()
-    assert np.array_equal(test_sample.shape, test_states.squeeze().shape)
-    assert np.all(test_sample[..., test_states.squeeze() > 0] > 0)
+    assert np.array_equal(test_sample.shape, test_states.shape)
+    assert np.all(test_sample[..., test_states > 0] > 0)
 
     test_states = np.c_[0, 0, 1, 1, 0, 1]
     test_dist = PoissonZeroProcess.dist(test_mus, test_states)
