@@ -9,7 +9,7 @@ import theano.tensor as tt
 
 import pymc3 as pm
 
-from theano.gof.op import get_test_value
+from theano.graph.op import get_test_value
 
 from tests.utils import simulate_poiszero_hmm
 

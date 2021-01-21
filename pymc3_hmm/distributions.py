@@ -1,21 +1,17 @@
-import numpy as np
-
-import theano
-import theano.tensor as tt
-
-import pymc3 as pm
-
 from copy import copy
 
-from theano.gof.op import get_test_value
-
-from pymc3.distributions.mixture import all_discrete, _conversion_map
-from pymc3.distributions.distribution import draw_values, _DrawValuesContext
+import numpy as np
+import pymc3 as pm
+import theano
+import theano.tensor as tt
+from pymc3.distributions.distribution import _DrawValuesContext, draw_values
+from pymc3.distributions.mixture import _conversion_map, all_discrete
+from theano.graph.op import get_test_value
 
 from pymc3_hmm.utils import (
     broadcast_to,
-    tt_expand_dims,
     tt_broadcast_arrays,
+    tt_expand_dims,
     vsearchsorted,
 )
 
@@ -218,21 +214,24 @@ class SwitchingProcess(pm.Distribution):
         -------
         array
         """
-        with _DrawValuesContext() as draw_context:
+        with _DrawValuesContext():
 
-            # TODO FIXME: Very, very lame...
-            term_smpl = draw_context.drawn_vars.get((self.states, 1), None)
-            if term_smpl is not None:
-                point[self.states.name] = term_smpl
+            (states,) = draw_values([self.states], point=point, size=size)
 
-            # `draw_values` is inconsistent and will not use the `size`
-            # parameter if the variables aren't random variables.
-            if hasattr(self.states, "distribution"):
-                (states,) = draw_values([self.states], point=point, size=size)
-            else:
-                states = pm.Constant.dist(self.states).random(point=point, size=size)
+            if size:
+                # `draw_values` will not honor the `size` parameter if its arguments
+                # don't contain random variables, so, when our `self.states` are
+                # constants, we have to broadcast `states` so that it matches `size +
+                # self.shape`.
+                # Unfortunately, this means that our sampler relies on
+                # `self.shape`, which is bad for other, arguable more important
+                # reasons (e.g. when this `Distribution`'s symbolic inputs change
+                # shape, we now have to manually update `Distribution.shape` so
+                # that the sampler is consistent)
 
-            # states = states.T
+                states = np.broadcast_to(
+                    states, tuple(np.atleast_1d(size)) + tuple(self.shape)
+                )
 
             samples = np.empty(states.shape)
 

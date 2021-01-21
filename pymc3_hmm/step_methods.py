@@ -7,12 +7,12 @@ import theano.tensor as tt
 from pymc3.step_methods.arraystep import ArrayStep, Competence
 from pymc3.util import get_untransformed_name
 from theano.compile import optdb
-from theano.gof.fg import FunctionGraph
-from theano.gof.graph import Variable
-from theano.gof.graph import inputs as tt_inputs
-from theano.gof.op import get_test_value as test_value
-from theano.gof.opt import OpRemove
-from theano.gof.optdb import Query
+from theano.graph.basic import Variable, graph_inputs
+from theano.graph.fg import FunctionGraph
+from theano.graph.op import get_test_value as test_value
+from theano.graph.opt import OpRemove, pre_greedy_local_optimizer
+from theano.graph.optdb import Query
+from theano.tensor.elemwise import DimShuffle, Elemwise
 from theano.tensor.subtensor import AdvancedIncSubtensor1
 from theano.tensor.var import TensorConstant
 
@@ -135,7 +135,7 @@ class FFBSStep(ArrayStep):
         self.dependent_rvs = [
             v
             for v in model.basic_RVs
-            if v is not var and var in tt.gof.graph.inputs([v.logpt])
+            if v is not var and var in graph_inputs([v.logpt])
         ]
 
         # We compile a function--from a Theano graph--that computes the
@@ -234,7 +234,7 @@ class TransMatConjugateStep(ArrayStep):
             v
             for v in model.vars + model.observed_RVs
             if isinstance(v.distribution, DiscreteMarkovChain)
-            and all(d in tt_inputs([v.distribution.Gammas]) for d in dir_priors)
+            and all(d in graph_inputs([v.distribution.Gammas]) for d in dir_priors)
         ]
 
         if not self.dir_priors_untrans or not len(state_seqs) == 1:
@@ -300,18 +300,19 @@ class TransMatConjugateStep(ArrayStep):
         """
 
         # Remove unimportant `Op`s from the transition matrix graph
-        Gamma = tt.gof.opt.pre_greedy_local_optimizer(
+        Gamma = pre_greedy_local_optimizer(
+            FunctionGraph([], []),
             [
-                OpRemove(tt.elemwise.Elemwise(ts.Cast(ts.float32))),
-                OpRemove(tt.elemwise.Elemwise(ts.Cast(ts.float64))),
-                OpRemove(tt.elemwise.Elemwise(ts.identity)),
+                OpRemove(Elemwise(ts.Cast(ts.float32))),
+                OpRemove(Elemwise(ts.Cast(ts.float64))),
+                OpRemove(Elemwise(ts.identity)),
             ],
             Gamma,
         )
 
         # Canonicalize the transition matrix graph
         fg = FunctionGraph(
-            tt_inputs([Gamma] + self.dir_priors_untrans),
+            list(graph_inputs([Gamma] + self.dir_priors_untrans)),
             [Gamma] + self.dir_priors_untrans,
             clone=True,
         )
@@ -323,7 +324,7 @@ class TransMatConjugateStep(ArrayStep):
 
         Gamma_DimShuffle = Gamma.owner
 
-        if not (isinstance(Gamma_DimShuffle.op, tt.elemwise.DimShuffle)):
+        if not (isinstance(Gamma_DimShuffle.op, DimShuffle)):
             raise TypeError("The transition matrix should be non-time-varying")
 
         Gamma_Join = Gamma_DimShuffle.inputs[0].owner
