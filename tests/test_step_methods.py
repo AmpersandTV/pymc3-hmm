@@ -1,21 +1,16 @@
 import warnings
 
-import pytest
-
 import numpy as np
-import scipy as sp
-
-import theano.tensor as tt
-
 import pymc3 as pm
-
+import pytest
+import scipy as sp
+import theano.tensor as tt
 from theano.graph.op import get_test_value
 
-from tests.utils import simulate_poiszero_hmm
-
+from pymc3_hmm.distributions import DiscreteMarkovChain, PoissonZeroProcess
+from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep, ffbs_astep
 from pymc3_hmm.utils import compute_steady_state, compute_trans_freqs
-from pymc3_hmm.distributions import PoissonZeroProcess, DiscreteMarkovChain
-from pymc3_hmm.step_methods import ffbs_astep, FFBSStep, TransMatConjugateStep
+from tests.utils import simulate_poiszero_hmm
 
 
 @pytest.fixture()
@@ -108,7 +103,7 @@ def test_FFBSStep():
 
         S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
 
-        Y_rv = PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
+        PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
 
     with test_model:
         ffbs = FFBSStep([S_rv])
@@ -123,7 +118,7 @@ def test_FFBSStep():
 
 
 def test_FFBSStep_extreme():
-    """Test a long series with extremely large mixture separation (and, thus, very small likelihoods)."""
+    """Test a long series with extremely large mixture separation (and, thus, very small likelihoods)."""  # noqa: E501
 
     np.random.seed(2032)
 
@@ -147,7 +142,7 @@ def test_FFBSStep_extreme():
         E_mu, Var_mu = 100.0, 10000.0
         mu_rv = pm.Gamma("mu", E_mu ** 2 / Var_mu, E_mu / Var_mu)
 
-        Y_rv = PoissonZeroProcess("Y_t", mu_rv, S_rv, observed=y_test)
+        PoissonZeroProcess("Y_t", mu_rv, S_rv, observed=y_test)
 
     with test_model:
         ffbs = FFBSStep([S_rv])
@@ -206,7 +201,7 @@ def test_TransMatConjugateStep():
 
         S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
 
-        Y_rv = PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
+        PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
 
     with test_model:
         transmat = TransMatConjugateStep(P_rv)
@@ -250,7 +245,7 @@ def test_TransMatConjugateStep_subtensors():
 
         P_tt = tt.stack([p_0_rv, p_1_rv, p_2_rv])
         P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
-        S_rv = DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
+        DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
 
         transmat = TransMatConjugateStep(P_rv)
 
@@ -276,7 +271,7 @@ def test_TransMatConjugateStep_subtensors():
             p_0_rv[..., None], p_1_rv[..., None], p_2_rv[..., None]
         )
         P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt.T))
-        S_rv = DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
+        DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
 
         transmat = TransMatConjugateStep(P_rv)
 
@@ -302,7 +297,7 @@ def test_TransMatConjugateStep_subtensors():
             p_0_rv[..., None], p_1_rv[..., None], p_2_rv[..., None]
         )
         P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt.T))
-        S_rv = DiscreteMarkovChain(
+        DiscreteMarkovChain(
             "S_t", P_rv, np.r_[1, 0, 0], shape=(4,), observed=np.r_[0, 1, 0, 2]
         )
 

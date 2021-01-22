@@ -207,7 +207,7 @@ class TransMatConjugateStep(ArrayStep):
     `theano.tensor.set_subtensor` `Op`s.  See
     `TransMatConjugateStep._set_row_mappings`.
 
-    """
+    """  # noqa: E501
 
     name = "trans-mat-conjugate"
 
@@ -297,7 +297,7 @@ class TransMatConjugateStep(ArrayStep):
         These mappings allow one to embed Dirichlet priors in larger transition
         matrices with--for instance--fixed transition behavior.
 
-        """
+        """  # noqa: E501
 
         # Remove unimportant `Op`s from the transition matrix graph
         Gamma = pre_greedy_local_optimizer(

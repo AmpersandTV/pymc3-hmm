@@ -108,7 +108,7 @@ class SwitchingProcess(pm.Distribution):
 
     This class is like `Mixture`, but without the mixture weights.
 
-    """
+    """  # noqa: E501
 
     def __init__(self, comp_dists, states, *args, **kwargs):
         """Initialize a `SwitchingProcess` instance.
@@ -336,7 +336,7 @@ class DiscreteMarkovChain(pm.Discrete):
 
             P(S_1 = s_1) \prod^{T}_{t=2} P(S_t = s_t \mid S_{t-1} = s_{t-1})
 
-        """
+        """  # noqa: E501
 
         Gammas = tt.shape_padleft(self.Gammas, states.ndim - (self.Gammas.ndim - 2))
 
@@ -410,7 +410,7 @@ class DiscreteMarkovChain(pm.Discrete):
         -------
         array
         """
-        with _DrawValuesContext() as draw_context:
+        with _DrawValuesContext():
             terms = [self.gamma_0, self.Gammas]
 
             gamma_0, Gamma = draw_values(terms, point=point)

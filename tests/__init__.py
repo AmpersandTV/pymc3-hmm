@@ -6,7 +6,6 @@ with warnings.catch_warnings():
 
 import pymc3
 
-
 # Prevent slow C compilation
 # theano.config.compute_test_value = "ignore"
 theano.config.on_opt_error = "raise"

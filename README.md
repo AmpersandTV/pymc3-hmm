@@ -30,7 +30,18 @@ First, pull in the source from GitHub:
 $ git clone git@github.com:AmpersandTV/pymc3-hmm.git
 ```
 
-Afterward, you can run `make conda` or `make venv` to set up a virtual environment.  After making changes, be sure to run `make black` in order to automatically format the code and then `make check` to run the linters and tests.
+Next, you can run `make conda` or `make venv` to set up a virtual environment.
+
+Once your virtual environment is set up, install the project, its dependencies, and the `pre-commit` hooks:
+
+```bash
+$ pip install -r requirements.txt
+$ pre-commit install --install-hooks
+```
+
+
+
+After making changes, be sure to run `make black` in order to automatically format the code and then `make check` to run the linters and tests.
 
 ## License
 

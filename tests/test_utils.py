@@ -1,17 +1,15 @@
-import pytest
-
 import numpy as np
+import pytest
 import scipy as sp
-
 import theano
 import theano.tensor as tt
 
 from pymc3_hmm.utils import (
     compute_trans_freqs,
     logdotexp,
+    multilogit_inv,
     tt_logdotexp,
     tt_logsumexp,
-    multilogit_inv,
 )
 
 
