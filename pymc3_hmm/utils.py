@@ -1,9 +1,6 @@
 import numpy as np
-
 import theano.tensor as tt
-
 from scipy.special import logsumexp
-
 
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[np.int], signature="(n),()->()")
 
@@ -277,11 +274,11 @@ def plot_split_timeseries(
     -------
     axes : list of axes
         The generated plot axes.
-    """
-    import pandas as pd
-    import matplotlib.pyplot as plt
+    """  # noqa: E501
     import matplotlib.dates as mdates
+    import matplotlib.pyplot as plt
     import matplotlib.transforms as mtrans
+    import pandas as pd
 
     if plot_fn is None:
 

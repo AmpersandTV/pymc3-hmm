@@ -1,19 +1,16 @@
-import pytest
-
 import numpy as np
-
 import pymc3 as pm
-
+import pytest
 import theano
 import theano.tensor as tt
 
-from tests.utils import simulate_poiszero_hmm
 from pymc3_hmm.distributions import (
-    PoissonZeroProcess,
     DiscreteMarkovChain,
+    PoissonZeroProcess,
     SwitchingProcess,
     distribution_subset_args,
 )
+from tests.utils import simulate_poiszero_hmm
 
 
 def test_DiscreteMarkovChain_str():

@@ -1,10 +1,8 @@
 import numpy as np
-
+import pymc3 as pm
 import theano.tensor as tt
 
-import pymc3 as pm
-
-from pymc3_hmm.distributions import PoissonZeroProcess, DiscreteMarkovChain
+from pymc3_hmm.distributions import DiscreteMarkovChain, PoissonZeroProcess
 
 
 def simulate_poiszero_hmm(
@@ -22,7 +20,7 @@ def simulate_poiszero_hmm(
 
         S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=N)
 
-        Y_rv = PoissonZeroProcess("Y_t", mu, S_rv, observed=np.zeros(N))
+        PoissonZeroProcess("Y_t", mu, S_rv, observed=np.zeros(N))
 
         sample_point = pm.sample_prior_predictive(samples=1)
 
