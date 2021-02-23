@@ -1,5 +1,8 @@
+from typing import Any, List
+
 import numpy as np
 import theano.tensor as tt
+from aesara.tensor.var import TensorVariable
 from scipy.special import logsumexp
 
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[np.int], signature="(n),()->()")
@@ -102,10 +105,12 @@ def tt_logdotexp(A, b):
     The result is more or less equivalent to `tt.log(tt.exp(A).dot(tt.exp(b)))`
 
     """
-    A_bcast = A.dimshuffle(list(range(A.ndim)) + ["x"])
+    pattern: List[Any] = list(range(A.ndim))
+    A_bcast = A.dimshuffle(pattern + ["x"])
 
     sqz = False
-    shape_b = ["x"] + list(range(b.ndim))
+    pattern_b: List[Any] = list(range(b.ndim))
+    shape_b = ["x"] + pattern_b
     if len(shape_b) < 3:
         shape_b += ["x"]
         sqz = True
@@ -149,7 +154,7 @@ def tt_expand_dims(x, dims):
         Position in the expanded axes where the new axis (or axes) is placed.
 
     """
-    dim_range = list(range(x.ndim))
+    dim_range: List[Any] = list(range(x.ndim))
     for d in sorted(np.atleast_1d(dims), reverse=True):
         offset = 0 if d >= 0 else len(dim_range) + 1
         dim_range.insert(d + offset, "x")
@@ -157,7 +162,7 @@ def tt_expand_dims(x, dims):
     return x.dimshuffle(dim_range)
 
 
-def tt_broadcast_arrays(*args):
+def tt_broadcast_arrays(*args: TensorVariable):
     """Broadcast any number of arrays against each other.
 
     This is a Theano emulation of `numpy.broadcast_arrays`.  It does *not* use
@@ -172,7 +177,9 @@ def tt_broadcast_arrays(*args):
     """
     p = max(a.ndim for a in args)
 
-    args = [tt.shape_padleft(a, n_ones=p - a.ndim) if a.ndim < p else a for a in args]
+    args = tuple(
+        tt.shape_padleft(a, n_ones=p - a.ndim) if a.ndim < p else a for a in args
+    )
 
     bcast_shape = [None] * p
     for i in range(p - 1, -1, -1):
