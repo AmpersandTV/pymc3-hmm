@@ -275,10 +275,10 @@ def plot_split_timeseries(
     axes : list of axes
         The generated plot axes.
     """  # noqa: E501
-    import matplotlib.dates as mdates
     import matplotlib.pyplot as plt
     import matplotlib.transforms as mtrans
     import pandas as pd
+    from matplotlib.dates import AutoDateFormatter, AutoDateLocator
 
     if plot_fn is None:
 
@@ -320,10 +320,10 @@ def plot_split_timeseries(
 
         plot_fn(ax, split_data, drawstyle=drawstyle, linewidth=linewidth, **plot_kwds)
 
-        ax.xaxis.set_minor_locator(mdates.HourLocator(byhour=range(0, 23, 3)))
-        ax.xaxis.set_minor_formatter(mdates.DateFormatter("%H"))
-        ax.xaxis.set_major_locator(mdates.WeekdayLocator(byweekday=range(0, 7, 1)))
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d %a"))
+        locator = AutoDateLocator()
+        formatter = AutoDateFormatter(locator)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(formatter)
 
         # Shift the major tick labels down
         for xlabel in ax.xaxis.get_majorticklabels():
