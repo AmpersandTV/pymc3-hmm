@@ -7,6 +7,30 @@ on:
     branches: [ main ]
 
 jobs:
+  changes:
+    name: "Check for changes"
+    runs-on: ubuntu-latest
+    outputs:
+      changes: ${{ steps.changes.outputs.src }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            python: &python
+            - 'pymc3_hmm/*.py'
+            - 'tests/*.py'
+            - '*.py'
+            src:
+            - *python
+            - '.github/**/*.yml'
+            - 'setup.cfg'
+            - 'requirements.txt'
+            - '.coveragerc'
+            - '.pre-commit-config.yaml'
 
   style:
     name: Check code style

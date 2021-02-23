@@ -432,12 +432,11 @@ class DiscreteMarkovChain(pm.Discrete):
             Gamma = np.broadcast_to(Gamma, tuple(states.shape) + Gamma.shape[-2:])
 
             # Slices across each independent/replication dimension
-            slices = [slice(None, d) for d in state_shape]
-            slices = tuple(np.ogrid[slices])
+            slices_tuple = tuple(np.ogrid[[slice(None, d) for d in state_shape]])
 
             for n in range(0, N):
                 gamma_t = Gamma[..., n, :, :]
-                gamma_t = gamma_t[slices + (state_n,)]
+                gamma_t = gamma_t[slices_tuple + (state_n,)]
                 state_n = vsearchsorted(gamma_t.cumsum(axis=-1), unif_samples[..., n])
                 states[..., n] = state_n
 

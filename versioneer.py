@@ -280,7 +280,7 @@ from __future__ import print_function
 try:
     import configparser
 except ImportError:
-    import ConfigParser as configparser
+    import ConfigParser as configparser # type: ignore[no-redef]
 import errno
 import json
 import os
