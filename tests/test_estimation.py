@@ -1,9 +1,55 @@
+from datetime import date, timedelta
+
+import arviz as az
 import numpy as np
+import pandas as pd
+import patsy
 import pymc3 as pm
+import theano
 import theano.tensor as tt
+from theano import shared
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.step_methods import FFBSStep
+from pymc3_hmm.utils import multilogit_inv
+
+
+def gen_toy_data(days=-7 * 10):
+    dates = date.today() + timedelta(days=days), date.today() + timedelta(days=2)
+    date_rng = pd.date_range(start=min(dates), end=max(dates), freq="H")
+    raw_data = {"date": date_rng}
+    data = pd.DataFrame.from_dict(raw_data)
+    data = data.assign(
+        month=pd.Categorical(data.date.dt.month, categories=list(range(1, 13))),
+        weekday=pd.Categorical(data.date.dt.weekday, categories=list(range(7))),
+        hour=pd.Categorical(data.date.dt.hour, categories=list(range(24))),
+    )
+    return data
+
+
+def create_dirac_zero_hmm(X, mu, xis, observed):
+    S = 2
+    z_tt = tt.stack([tt.dot(X, xis[..., s, :]) for s in range(S)], axis=1)
+    Gammas_tt = pm.Deterministic("Gamma", multilogit_inv(z_tt))
+    gamma_0_rv = pm.Dirichlet("gamma_0", np.ones((S,)))
+
+    if type(observed) == np.ndarray:
+        T = X.shape[0]
+    else:
+        T = X.get_value().shape[0]
+
+    V_rv = DiscreteMarkovChain("V_t", Gammas_tt, gamma_0_rv, shape=T)
+    if type(observed) == np.ndarray:
+        V_rv.tag.test_value = (observed > 0) * 1
+    else:
+        V_rv.tag.test_value = (observed.get_value() > 0) * 1
+    Y_rv = SwitchingProcess(
+        "Y_t",
+        [pm.Constant.dist(0), pm.Constant.dist(mu)],
+        V_rv,
+        observed=observed,
+    )
+    return Y_rv
 
 
 def test_only_positive_state():
@@ -42,3 +88,89 @@ def test_only_positive_state():
             posterior_trace.posterior, var_names=["Y_t"]
         )
         assert np.all(posterior_pred_trace["Y_t"] == 0)
+
+
+def test_time_varying_model():
+
+    np.random.seed(1039)
+
+    data = gen_toy_data()
+
+    formula_str = "1 + C(weekday)"
+    X_df = patsy.dmatrix(formula_str, data, return_type="dataframe").values
+
+    xi_shape = X_df.shape[1]
+
+    xi_0_true = np.array([2.0, -2.0, 2.0, -2.0, 2.0, -2.0, 2.0]).reshape(xi_shape, 1)
+    xi_1_true = np.array([2.0, -2.0, 2.0, -2.0, 2.0, -2.0, 2.0]).reshape(xi_shape, 1)
+
+    xis_rv_true = np.stack([xi_0_true, xi_1_true], axis=1)
+
+    with pm.Model(theano_config={"compute_test_value": "ignore"}) as sim_model:
+        _ = create_dirac_zero_hmm(
+            X_df, mu=1000, xis=xis_rv_true, observed=np.zeros(X_df.shape[0])
+        )
+
+    sim_point = pm.sample_prior_predictive(samples=1, model=sim_model)
+
+    y_t = sim_point["Y_t"].squeeze()
+
+    split = int(len(y_t) * 0.7)
+
+    train_y, test_V = y_t[:split], sim_point["V_t"].squeeze()[split:]
+    train_X, test_X = X_df[:split, :], X_df[split:, :]
+
+    X = shared(train_X, name="X", borrow=True)
+    Y = shared(train_y, name="y_t", borrow=True)
+
+    with pm.Model() as model:
+        xis_rv = pm.Normal("xis", 0, 10, shape=xis_rv_true.shape)
+        _ = create_dirac_zero_hmm(X, 1000, xis_rv, Y)
+
+    number_of_draws = 400
+
+    with model:
+        steps = [
+            FFBSStep([model.V_t]),
+            pm.NUTS(
+                vars=[
+                    model.gamma_0,
+                    model.Gamma,
+                ],
+                target_accept=0.90,
+            ),
+        ]
+
+    with model:
+        posterior_trace = pm.sample(
+            draws=number_of_draws,
+            step=steps,
+            random_seed=100,
+            return_inferencedata=True,
+            chains=1,
+            cores=1,
+            tune=number_of_draws // 2,
+            progressbar=True,
+            idata_kwargs={"dims": {"Y_t": ["date"], "V_t": ["date"]}},
+        )
+
+    # Update the shared variable values
+    Y.set_value(np.ones(test_X.shape[0]))
+    X.set_value(test_X)
+
+    model.V_t.distribution.shape = (test_X.shape[0],)
+
+    hdi_data = az.hdi(posterior_trace, hdi_prob=0.95, var_names=["xis"]).to_dataframe()
+    hdi_data = hdi_data.unstack(level="hdi")
+
+    assert np.all(xis_rv_true.squeeze().flatten() <= hdi_data["xis", "higher"])
+    assert np.all(xis_rv_true.squeeze().flatten() >= hdi_data["xis", "lower"])
+
+    trace = posterior_trace.posterior.drop_vars(["Gamma", "V_t"])
+
+    with theano.config.change_flags(compute_test_value="off"):
+        adds_pois_ppc = pm.sample_posterior_predictive(
+            trace, var_names=["V_t", "Y_t", "Gamma"], model=model
+        )
+
+    assert (np.abs(adds_pois_ppc["V_t"] - test_V) / test_V.shape[0]).mean() < 1e-2
