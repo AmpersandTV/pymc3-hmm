@@ -1,11 +1,16 @@
-from typing import Any, List
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import theano.tensor as tt
+from matplotlib import cm
+from matplotlib.axes import Axes
+from matplotlib.colors import Colormap
 from scipy.special import logsumexp
 from theano.tensor.var import TensorVariable
 
-vsearchsorted = np.vectorize(np.searchsorted, otypes=[np.int], signature="(n),()->()")
+vsearchsorted = np.vectorize(np.searchsorted, otypes=[int], signature="(n),()->()")
 
 
 def compute_steady_state(P):
@@ -243,16 +248,16 @@ def multilogit_inv(ys):
 
 
 def plot_split_timeseries(
-    data,
-    split_freq="W",
-    split_max=5,
-    twin_column_name=None,
-    twin_plot_kwargs=None,
-    figsize=(15, 15),
-    title=None,
-    drawstyle="steps-pre",
-    linewidth=0.5,
-    plot_fn=None,
+    data: pd.DataFrame,
+    split_freq: str = "W",
+    split_max: int = 5,
+    twin_column_name: Optional[str] = None,
+    twin_plot_kwargs: Optional[Dict[str, Any]] = None,
+    figsize: Tuple[int, ...] = (15, 15),
+    title: Optional[str] = None,
+    drawstyle: str = "steps-pre",
+    linewidth: float = 0.5,
+    plot_fn: Optional[Callable[..., Any]] = None,
     **plot_kwds
 ):  # pragma: no cover
     """Plot long timeseries by splitting them across multiple rows using a given time frequency.
@@ -282,15 +287,16 @@ def plot_split_timeseries(
     axes : list of axes
         The generated plot axes.
     """  # noqa: E501
-    import matplotlib.pyplot as plt
     import matplotlib.transforms as mtrans
     import pandas as pd
     from matplotlib.dates import AutoDateFormatter, AutoDateLocator
 
     if plot_fn is None:
 
-        def plot_fn(ax, data, **kwargs):
+        def plot_fn_(ax, data, **kwargs):
             return ax.plot(data, **kwargs)
+
+        plot_fn = plot_fn_
 
     data = pd.DataFrame(data)
 
@@ -325,7 +331,9 @@ def plot_split_timeseries(
             alt_data = split_data[twin_column_name].to_frame()
             split_data = split_data.drop(columns=[twin_column_name])
 
-        plot_fn(ax, split_data, drawstyle=drawstyle, linewidth=linewidth, **plot_kwds)
+        plot_kwds.setdefault("drawstyle", drawstyle)
+        plot_kwds.setdefault("linewidth", linewidth)
+        plot_fn(ax, split_data, **plot_kwds)
 
         locator = AutoDateLocator()
         formatter = AutoDateFormatter(locator)
@@ -369,3 +377,84 @@ def plot_split_timeseries(
     plt.tight_layout()
 
     return return_axes_data
+
+
+def plot_predictive_histograms(
+    data: pd.DataFrame,
+    axes: Axes = None,
+    bins: Union[str, int, np.ndarray, Sequence[Union[int, float]]] = "auto",
+    colormap: Colormap = cm.Blues,
+    **plot_kwargs
+) -> Axes:  # pragma: no cover
+    """Generate a heat-map-like plot for time-series sample data.
+
+    The kind of input this function expects can be obtained from an
+    XArray object as follows:
+
+    .. code:
+
+        data = az_post_trace.posterior_predictive.Y_t[chain_idx].loc[
+            {"dt": slice(t1, t2)}
+        ]
+        data = data.to_dataframe().Y_t.unstack(level=0)
+
+    Parameters
+    ==========
+    data
+        The sample data to be plotted.  This should be in "wide" format: i.e.
+        the index should be "time" and the columns should correspond to each
+        sample.
+    axes
+        The Matplotlib axes to use for plotting.
+    bins
+        The `bins` parameter passed to ``np.histogram``.
+    colormap
+        The Matplotlib colormap use to show relative frequencies within bins.
+    plot_kwargs
+        Keywords passed to ``fill_between``.
+
+    """
+    index = data.index
+    y_samples = data.values.T
+
+    n_t = len(index)
+
+    # generate histograms and bins
+    list_of_hist, list_of_bins = [], []
+    for t in range(n_t):
+        # TODO: determine proper range=(np.min(Y_t), np.max(Y_t))
+        hist, bins_ = np.histogram(y_samples[:, t], bins=bins, density=True)
+        if np.sum(hist > 0) == 1:
+            hist, bins_ = np.array([1.0]), np.array([bins_[0], bins_[-1]])
+        list_of_hist.append(hist)
+        list_of_bins.append(bins_)
+
+    if axes is None:
+        _, (axes) = plt.subplots(nrows=1, ncols=1, sharex=True, figsize=(12, 4))
+        axes.plot(index, np.mean(y_samples, axis=0), alpha=0.0, drawstyle="steps")
+
+    for t in range(n_t):
+        mask = index == index[t]
+        hist, bins_ = list_of_hist[t], list_of_bins[t]
+        # normalize bin weights for plotting
+        hist = hist / np.max(hist) * 0.85 if len(hist) > 1 else hist
+        n = len(hist)
+        # construct predictive arrays to plot
+        y_t_ = np.tile(bins_, (n_t, 1))
+        # include consecutive time points to create grid-ish steps
+        if t > 0:
+            mask = np.logical_or(mask, index == index[t - 1])
+        for i in range(n):
+            color_val = hist[i]
+            color = colormap(color_val) if color_val else (1, 1, 1, 1)
+            plot_kwargs.setdefault("step", "pre")
+            axes.fill_between(
+                index,
+                y_t_[:, i],
+                y_t_[:, i + 1],
+                where=mask,
+                color=color,
+                **plot_kwargs,
+            )
+
+    return axes
