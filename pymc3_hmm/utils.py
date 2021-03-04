@@ -2,8 +2,8 @@ from typing import Any, List
 
 import numpy as np
 import theano.tensor as tt
-from aesara.tensor.var import TensorVariable
 from scipy.special import logsumexp
+from theano.tensor.var import TensorVariable
 
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[np.int], signature="(n),()->()")
 
