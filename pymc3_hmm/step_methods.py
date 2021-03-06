@@ -19,8 +19,8 @@ from theano.tensor.var import TensorConstant
 from pymc3_hmm.distributions import DiscreteMarkovChain
 from pymc3_hmm.utils import compute_trans_freqs
 
-big: np.float = 1e20
-small: np.float = 1.0 / big
+big: float = 1e20
+small: float = 1.0 / big
 
 
 def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
@@ -57,7 +57,7 @@ def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
     gamma_0_normed /= np.sum(gamma_0)
 
     # "Forward" probabilities
-    alphas: np.ndarray = np.empty((M, N), dtype=np.float)
+    alphas: np.ndarray = np.empty((M, N), dtype=float)
     # Previous forward probability
     alpha_nm1: np.ndarray = gamma_0_normed
 
@@ -65,8 +65,8 @@ def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
     # sequence
     Gamma: np.ndarray = np.broadcast_to(Gammas, (N,) + Gammas.shape[-2:])
 
-    lik_n: np.ndarray = np.empty((M,), dtype=np.float)
-    alpha_n: np.ndarray = np.empty((M,), dtype=np.float)
+    lik_n: np.ndarray = np.empty((M,), dtype=float)
+    alpha_n: np.ndarray = np.empty((M,), dtype=float)
 
     # Forward filtering
     for n in range(N):
@@ -96,7 +96,7 @@ def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
 
     samples[N - 1] = state_np1
 
-    beta_n: np.ndarray = np.empty((M,), dtype=np.float)
+    beta_n: np.ndarray = np.empty((M,), dtype=float)
 
     # Backward sampling
     for n in range(N - 2, -1, -1):
@@ -159,7 +159,7 @@ class FFBSStep(ArrayStep):
         # TODO: Why won't broadcasting work with `log_lik_fn`?  Seems like we
         # could be missing out on a much more efficient/faster approach to this
         # potentially large computation.
-        # state_seqs = np.broadcast_to(np.arange(M, dtype=np.int)[..., None], (M, N))
+        # state_seqs = np.broadcast_to(np.arange(M, dtype=int)[..., None], (M, N))
         # log_lik_t = log_lik_fn(state_seqs)
         log_lik_t = np.stack([log_lik_fn(np.broadcast_to(m, N)) for m in range(M)])
 
