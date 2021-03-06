@@ -1,4 +1,4 @@
-from copy import copy
+import warnings
 
 import numpy as np
 import pymc3 as pm
@@ -7,6 +7,7 @@ import theano.tensor as tt
 from pymc3.distributions.distribution import _DrawValuesContext, draw_values
 from pymc3.distributions.mixture import _conversion_map, all_discrete
 from theano.graph.op import get_test_value
+from theano.graph.utils import TestValueError
 
 from pymc3_hmm.utils import (
     broadcast_to,
@@ -60,7 +61,7 @@ def distribution_subset_args(dist, shape, idx, point=None):
         # given.
         try:
             idx = get_test_value(idx)
-        except AttributeError:  # pragma: no cover
+        except TestValueError:  # pragma: no cover
             pass
 
     res = []
@@ -80,7 +81,7 @@ def distribution_subset_args(dist, shape, idx, point=None):
             try:
                 x = get_test_value(x)
                 shape = get_test_value(shape)
-            except AttributeError:  # pragma: no cover
+            except TestValueError:  # pragma: no cover
                 pass
 
         res.append(broadcast_to(x, shape)[idx])
@@ -131,21 +132,18 @@ class SwitchingProcess(pm.Distribution):
         """
         self.states = tt.as_tensor_variable(pm.intX(states))
 
-        states_tv = get_test_value(self.states)
+        if len(comp_dists) > 31:
+            warnings.warn(
+                "There are too many mixture distributions to properly"
+                " determine their combined shape."
+            )
 
+        self.comp_dists = comp_dists
+
+        states_tv = get_test_value(self.states)
         bcast_comps = np.broadcast(
             states_tv, *[get_and_check_comp_value(x) for x in comp_dists[:31]]
         )
-
-        self.comp_dists = []
-        for dist in comp_dists:
-            d = copy(dist)
-            d.shape = bcast_comps.shape
-            self.comp_dists.append(d)
-
-        # TODO: Not sure why we would allow users to set the shape if we're
-        # just going to compute it.
-        # shape = kwargs.pop("shape", bcast_comps.shape)
         shape = bcast_comps.shape
 
         defaults = kwargs.pop("defaults", [])
@@ -215,42 +213,48 @@ class SwitchingProcess(pm.Distribution):
         array
         """
         with _DrawValuesContext():
-
             (states,) = draw_values([self.states], point=point, size=size)
 
-            if size:
-                # `draw_values` will not honor the `size` parameter if its arguments
-                # don't contain random variables, so, when our `self.states` are
-                # constants, we have to broadcast `states` so that it matches `size +
-                # self.shape`.
-                # Unfortunately, this means that our sampler relies on
-                # `self.shape`, which is bad for other, arguable more important
-                # reasons (e.g. when this `Distribution`'s symbolic inputs change
-                # shape, we now have to manually update `Distribution.shape` so
-                # that the sampler is consistent)
+        # This is a terrible thing to have to do here, but it's better than
+        # having to (know to) update `Distribution.shape` when/if dimensions
+        # change (e.g. when sampling new state sequences).
+        bcast_comps = np.broadcast(
+            states, *[dist.random(point=point) for dist in self.comp_dists]
+        )
+        self_shape = bcast_comps.shape
 
-                states = np.broadcast_to(
-                    states, tuple(np.atleast_1d(size)) + tuple(self.shape)
+        if size:
+            # `draw_values` will not honor the `size` parameter if its arguments
+            # don't contain random variables, so, when our `self.states` are
+            # constants, we have to broadcast `states` so that it matches `size +
+            # self.shape`.
+            expanded_states = np.broadcast_to(
+                states, tuple(np.atleast_1d(size)) + self_shape
+            )
+        else:
+            expanded_states = np.broadcast_to(states, self_shape)
+
+        samples = np.empty(expanded_states.shape)
+
+        for i, dist in enumerate(self.comp_dists):
+            # We want to sample from only the parts of our component
+            # distributions that are active given the states.
+            # This is only really relevant when the component distributions
+            # change over the state space (e.g. Poisson means that change
+            # over time).
+            # We could always sample such components over the entire space
+            # (e.g. time), but, for spaces with large dimension, that would
+            # be extremely costly and wasteful.
+            i_idx = np.where(expanded_states == i)
+            i_size = len(i_idx[0])
+            if i_size > 0:
+                subset_args = distribution_subset_args(
+                    dist, expanded_states.shape, i_idx, point=point
                 )
+                state_dist = dist.dist(*subset_args)
 
-            samples = np.empty(states.shape)
-
-            for i, dist in enumerate(self.comp_dists):
-                # We want to sample from only the parts of our component
-                # distributions that are active given the states.
-                # This is only really relevant when the component distributions
-                # change over the state space (e.g. Poisson means that change
-                # over time).
-                # We could always sample such components over the entire space
-                # (e.g. time), but, for spaces with large dimension, that would
-                # be extremely costly and wasteful.
-                i_idx = np.where(states == i)
-                i_size = len(i_idx[0])
-                if i_size > 0:
-                    subset_args = distribution_subset_args(
-                        dist, states.shape, i_idx, point=point
-                    )
-                    samples[i_idx] = dist.dist(*subset_args).random(point=point)
+                sample = state_dist.random(point=point)
+                samples[i_idx] = sample
 
         return samples
 
@@ -410,37 +414,37 @@ class DiscreteMarkovChain(pm.Discrete):
         -------
         array
         """
-        with _DrawValuesContext():
-            terms = [self.gamma_0, self.Gammas]
+        terms = [self.gamma_0, self.Gammas]
 
+        with _DrawValuesContext():
             gamma_0, Gamma = draw_values(terms, point=point)
 
-            # Sample state 0 in each state sequence
-            state_n = pm.Categorical.dist(gamma_0, shape=self.shape[:-1]).random(
-                point=point, size=size
-            )
-            state_shape = state_n.shape
+        # Sample state 0 in each state sequence
+        state_n = pm.Categorical.dist(gamma_0, shape=self.shape[:-1]).random(
+            point=point, size=size
+        )
+        state_shape = state_n.shape
 
-            N = self.shape[-1]
+        N = self.shape[-1]
 
-            states = np.empty(state_shape + (N,), dtype=self.dtype)
+        states = np.empty(state_shape + (N,), dtype=self.dtype)
 
-            unif_samples = np.random.uniform(size=states.shape)
+        unif_samples = np.random.uniform(size=states.shape)
 
-            # Make sure we have a transition matrix for each element in a state
-            # sequence
-            Gamma = np.broadcast_to(Gamma, tuple(states.shape) + Gamma.shape[-2:])
+        # Make sure we have a transition matrix for each element in a state
+        # sequence
+        Gamma = np.broadcast_to(Gamma, tuple(states.shape) + Gamma.shape[-2:])
 
-            # Slices across each independent/replication dimension
-            slices_tuple = tuple(np.ogrid[[slice(None, d) for d in state_shape]])
+        # Slices across each independent/replication dimension
+        slices_tuple = tuple(np.ogrid[[slice(None, d) for d in state_shape]])
 
-            for n in range(0, N):
-                gamma_t = Gamma[..., n, :, :]
-                gamma_t = gamma_t[slices_tuple + (state_n,)]
-                state_n = vsearchsorted(gamma_t.cumsum(axis=-1), unif_samples[..., n])
-                states[..., n] = state_n
+        for n in range(0, N):
+            gamma_t = Gamma[..., n, :, :]
+            gamma_t = gamma_t[slices_tuple + (state_n,)]
+            state_n = vsearchsorted(gamma_t.cumsum(axis=-1), unif_samples[..., n])
+            states[..., n] = state_n
 
-            return states
+        return states
 
     def _distr_parameters_for_repr(self):
         return ["Gammas", "gamma_0"]
