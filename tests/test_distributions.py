@@ -361,9 +361,10 @@ def test_DiscreteMarkovChain_logp():
     assert np.allclose(logp_res, logp_exp)
 
 
-def test_PoissonZeroProcess_random():
+def test_SwitchingProcess_random():
     test_states = np.r_[0, 0, 1, 1, 0, 1]
-    test_dist = PoissonZeroProcess.dist(10.0, test_states)
+    mu_zero_nonzero = [pm.Constant.dist(0), pm.Constant.dist(1)]
+    test_dist = SwitchingProcess.dist(mu_zero_nonzero, test_states)
     assert np.array_equal(test_dist.shape, test_states.shape)
     test_sample = test_dist.random()
     assert test_sample.shape == (test_states.shape[0],)
@@ -374,37 +375,50 @@ def test_PoissonZeroProcess_random():
     assert np.all(test_sample[..., test_states > 0] > 0)
 
     test_states = np.r_[0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0]
-    test_dist = PoissonZeroProcess.dist(100.0, test_states)
+    test_dist = SwitchingProcess.dist(mu_zero_nonzero, test_states)
     assert np.array_equal(test_dist.shape, test_states.shape)
     test_sample = test_dist.random(size=1)
     assert np.array_equal(test_sample.shape, (1,) + test_states.shape)
     assert np.all(test_sample[..., test_states > 0] > 0)
 
     test_states = np.r_[0, 0, 1, 1, 0, 1]
-    test_mus = np.r_[10.0, 10.0, 10.0, 20.0, 20.0, 20.0]
-    test_dist = PoissonZeroProcess.dist(test_mus, test_states)
+    test_mus = [pm.Constant.dist(i) for i in range(6)]
+    test_dist = SwitchingProcess.dist(test_mus, test_states)
     assert np.array_equal(test_dist.shape, test_states.shape)
     test_sample = test_dist.random()
     assert np.array_equal(test_sample.shape, test_states.shape)
     assert np.all(test_sample[..., test_states > 0] > 0)
 
     test_states = np.c_[0, 0, 1, 1, 0, 1].T
-    test_dist = PoissonZeroProcess.dist(test_mus, test_states)
-    # There are six Poisson means and six length one time/state sequence
-    # dimensions; the result should broadcast the *state sequence* along the
-    # six Poisson means.
-    assert np.array_equal(test_dist.shape, (6, 6))
+    test_mus = np.arange(1, 6).astype(float)
+    # One of the states has emissions that are a sequence of five Dirac delta
+    # distributions on the values 1 to 5 (i.e. the one with values
+    # `test_mus`), and the other is just a single delta at 0.  A single state
+    # sample from this emissions mixture is a length five array of zeros or the
+    # values 1 to 5.
+    # Instead of specifying a state sequence containing only one state, we use
+    # six state sequences--each of length one.  This should give us six samples
+    # of either five zeros or the values 1 to 5.
+    test_dist = SwitchingProcess.dist(
+        [pm.Constant.dist(0), pm.Constant.dist(test_mus)], test_states
+    )
+    assert np.array_equal(test_dist.shape, (6, 5))
     test_sample = test_dist.random()
-    assert np.array_equal(test_sample.shape, test_states.shape)
-    assert np.all(test_sample[..., test_states > 0] > 0)
+    assert np.array_equal(test_sample.shape, test_dist.shape)
+    assert np.all(test_sample[np.where(test_states > 0)[0]] == test_mus)
 
     test_states = np.c_[0, 0, 1, 1, 0, 1]
-    test_dist = PoissonZeroProcess.dist(test_mus, test_states)
+    test_mus = np.arange(1, 7).astype(float)
+    test_dist = SwitchingProcess.dist(
+        [pm.Constant.dist(0), pm.Constant.dist(test_mus)], test_states
+    )
     assert np.array_equal(test_dist.shape, test_states.shape)
 
     test_states = np.r_[0, 0, 1, 1, 0, 1]
-    test_sample = PoissonZeroProcess.dist(10.0, test_states).random(size=3)
-    assert np.array_equal(test_sample.shape, (3,) + test_states.shape)
+    test_sample = SwitchingProcess.dist(
+        [pm.Constant.dist(0), pm.Constant.dist(test_mus)], test_states
+    ).random(size=3)
+    assert np.array_equal(test_sample.shape, (3,) + test_mus.shape)
     assert np.all(test_sample.sum(0)[..., test_states > 0] > 0)
 
 

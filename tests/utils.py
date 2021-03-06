@@ -24,7 +24,10 @@ def simulate_poiszero_hmm(
 
         sample_point = pm.sample_prior_predictive(samples=1)
 
-        # Remote the extra "sampling" dimension from the sample results
+        # Remove the extra "sampling" dimension from the sample results
         sample_point = {k: v.squeeze(0) for k, v in sample_point.items()}
+        # Remove the extra dimension added due to `pm.sample_prior_predictive`
+        # forcing `size=1` in its call to `test_model.Y_t.random`.
+        sample_point["Y_t"] = sample_point["Y_t"].squeeze(0)
 
     return sample_point, test_model
