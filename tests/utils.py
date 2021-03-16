@@ -6,7 +6,7 @@ from pymc3_hmm.distributions import DiscreteMarkovChain, PoissonZeroProcess
 
 
 def simulate_poiszero_hmm(
-    N, mu=10.0, pi_0_a=np.r_[1, 1], p_0_a=np.r_[5, 1], p_1_a=np.r_[1, 1]
+    N, mu=10.0, pi_0_a=np.r_[1, 1], p_0_a=np.r_[5, 1], p_1_a=np.r_[1, 1], pi_0=None
 ):
 
     with pm.Model() as test_model:
@@ -16,7 +16,10 @@ def simulate_poiszero_hmm(
         P_tt = tt.stack([p_0_rv, p_1_rv])
         P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
 
-        pi_0_tt = pm.Dirichlet("pi_0", pi_0_a)
+        if pi_0:
+            pi_0_tt = pm.Dirichlet("pi_0", pi_0)
+        else:
+            pi_0_tt = pm.Dirichlet("pi_0", pi_0_a)
 
         S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=N)
 
