@@ -249,14 +249,13 @@ def multilogit_inv(ys):
 
 def plot_split_timeseries(
     data: pd.DataFrame,
+    axes_split_data: Optional[List] = None,
     split_freq: str = "W",
     split_max: int = 5,
     twin_column_name: Optional[str] = None,
     twin_plot_kwargs: Optional[Dict[str, Any]] = None,
     figsize: Tuple[int, ...] = (15, 15),
     title: Optional[str] = None,
-    drawstyle: str = "steps-pre",
-    linewidth: float = 0.5,
     plot_fn: Optional[Callable[..., Any]] = None,
     **plot_kwds
 ):  # pragma: no cover
@@ -268,6 +267,8 @@ def plot_split_timeseries(
     ----------
     data: DataFrame
         The timeseries to be plotted.
+    axes_split_data: List (optional)
+        The result from a previous call of `plot_split_timeseries`.
     split_freq: str
         A Pandas time frequency string by which the series is split.
     split_max: int
@@ -288,7 +289,6 @@ def plot_split_timeseries(
         The generated plot axes.
     """  # noqa: E501
     import matplotlib.transforms as mtrans
-    import pandas as pd
     from matplotlib.dates import AutoDateFormatter, AutoDateLocator
 
     if plot_fn is None:
@@ -307,19 +307,31 @@ def plot_split_timeseries(
 
     split_offset = pd.tseries.frequencies.to_offset(split_freq)
 
-    grouper = pd.Grouper(freq=split_offset.freqstr, closed="left")
-    obs_splits = [y_split for n, y_split in data.groupby(grouper)]
+    if axes_split_data is None:
+        grouper = pd.Grouper(freq=split_offset.freqstr, closed="left")
+        obs_splits = [y_split for n, y_split in data.groupby(grouper)]
 
-    if split_max:
-        obs_splits = obs_splits[:split_max]
+        if split_max:
+            obs_splits = obs_splits[:split_max]
 
-    n_partitions = len(obs_splits)
+        n_partitions = len(obs_splits)
 
-    fig, axes = plt.subplots(
-        nrows=n_partitions, sharey=True, sharex=False, figsize=figsize
-    )
+        fig, axes = plt.subplots(
+            nrows=n_partitions, sharey=True, sharex=False, figsize=figsize
+        )
 
-    major_offset = mtrans.ScaledTranslation(0, -10 / 72.0, fig.dpi_scale_trans)
+        major_offset = mtrans.ScaledTranslation(0, -10 / 72.0, fig.dpi_scale_trans)
+
+    else:
+        # access split data
+        if isinstance(axes_split_data[0][0], Axes):
+            axes, split_indices = zip(*axes_split_data)
+        else:
+            axes_, splits_ = zip(*axes_split_data)
+            (axes, _), (splits, _) = zip(*axes_), zip(*splits_)
+            split_indices = [split.index for split in splits]
+        obs_splits = [data.loc[split_idx, :] for split_idx in split_indices]
+        major_offset = None
 
     axes[0].set_title(title)
 
@@ -331,18 +343,18 @@ def plot_split_timeseries(
             alt_data = split_data[twin_column_name].to_frame()
             split_data = split_data.drop(columns=[twin_column_name])
 
-        plot_kwds.setdefault("drawstyle", drawstyle)
-        plot_kwds.setdefault("linewidth", linewidth)
         plot_fn(ax, split_data, **plot_kwds)
 
-        locator = AutoDateLocator()
-        formatter = AutoDateFormatter(locator)
-        ax.xaxis.set_major_locator(locator)
-        ax.xaxis.set_major_formatter(formatter)
+        if major_offset is not None:
+            locator = AutoDateLocator()
+            formatter = AutoDateFormatter(locator)
 
-        # Shift the major tick labels down
-        for xlabel in ax.xaxis.get_majorticklabels():
-            xlabel.set_transform(xlabel.get_transform() + major_offset)
+            ax.xaxis.set_major_locator(locator)
+            ax.xaxis.set_major_formatter(formatter)
+
+            # Shift the major tick labels down
+            for xlabel in ax.xaxis.get_majorticklabels():
+                xlabel.set_transform(xlabel.get_transform() + major_offset)
 
         legend_lines, legend_labels = ax.get_legend_handles_labels()
 
@@ -379,9 +391,9 @@ def plot_split_timeseries(
     return return_axes_data
 
 
-def plot_predictive_histograms(
+def plot_timeseries_histograms(
+    axes: Axes,
     data: pd.DataFrame,
-    axes: Axes = None,
     bins: Union[str, int, np.ndarray, Sequence[Union[int, float]]] = "auto",
     colormap: Colormap = cm.Blues,
     **plot_kwargs
@@ -400,12 +412,12 @@ def plot_predictive_histograms(
 
     Parameters
     ==========
+    axes
+        The Matplotlib axes to use for plotting.
     data
         The sample data to be plotted.  This should be in "wide" format: i.e.
         the index should be "time" and the columns should correspond to each
         sample.
-    axes
-        The Matplotlib axes to use for plotting.
     bins
         The `bins` parameter passed to ``np.histogram``.
     colormap
@@ -415,7 +427,7 @@ def plot_predictive_histograms(
 
     """
     index = data.index
-    y_samples = data.values.T
+    y_samples = data.values
 
     n_t = len(index)
 
@@ -423,7 +435,7 @@ def plot_predictive_histograms(
     list_of_hist, list_of_bins = [], []
     for t in range(n_t):
         # TODO: determine proper range=(np.min(Y_t), np.max(Y_t))
-        hist, bins_ = np.histogram(y_samples[:, t], bins=bins, density=True)
+        hist, bins_ = np.histogram(y_samples[t], bins=bins, density=True)
         if np.sum(hist > 0) == 1:
             hist, bins_ = np.array([1.0]), np.array([bins_[0], bins_[-1]])
         list_of_hist.append(hist)
@@ -431,7 +443,7 @@ def plot_predictive_histograms(
 
     if axes is None:
         _, (axes) = plt.subplots(nrows=1, ncols=1, sharex=True, figsize=(12, 4))
-        axes.plot(index, np.mean(y_samples, axis=0), alpha=0.0, drawstyle="steps")
+        axes.plot(index, np.mean(y_samples, axis=1), alpha=0.0, drawstyle="steps")
 
     for t in range(n_t):
         mask = index == index[t]
@@ -458,3 +470,38 @@ def plot_predictive_histograms(
             )
 
     return axes
+
+
+def plot_split_timeseries_histograms(
+    plot_data: pd.DataFrame, sample_col: str, plot_fn: Callable, **split_ts_kwargs
+):  # pragma: no cover
+    """A wrapper function for `plot_split_timeseries` and `plot_timeseries_histograms`
+
+    Parameters
+    ==========
+    plot_data: DataFrame
+        The sample data to be plotted.  This should be in "wide" format: i.e.
+        the index should be "time" and the columns should correspond to each
+        sample.
+    sample_col: str
+        Sample column to be plotted via `plot_timeseries_histograms`.
+    plot_fn: callable
+        A user-defined function to plot non-sample column(s), juxtaposed with
+        the histogram plot of the sample column.
+    split_ts_kwargs
+        Keywords passed to ``plot_split_timeseries``.
+
+    """
+    axes_split_data = plot_split_timeseries(
+        plot_data,
+        plot_fn=plot_fn,
+        **split_ts_kwargs,
+    )
+
+    _ = plot_split_timeseries(
+        plot_data[sample_col],
+        axes_split_data=axes_split_data,
+        plot_fn=plot_timeseries_histograms,
+    )
+
+    return axes_split_data
