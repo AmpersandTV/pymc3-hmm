@@ -5,6 +5,7 @@ import theano
 import theano.tensor as tt
 
 from pymc3_hmm.utils import (
+    compute_steady_state,
     compute_trans_freqs,
     logdotexp,
     multilogit_inv,
@@ -120,3 +121,17 @@ def test_multilogit_inv(test_input, test_output):
     res = multilogit_inv(tt.as_tensor_variable(test_input))
     res = res.eval()
     assert np.array_equal(res.round(2), test_output)
+
+
+test_cases = [
+    (np.ones((2, 2)) * 0.5, np.array([0.5, 0.5])),
+    (np.eye(4), np.array([1, 0, 0, 0])),
+]
+
+
+@pytest.mark.parametrize("transition_matrix, steady_state", test_cases)
+def test_compute_steady_state(transition_matrix, steady_state):
+
+    P = tt.as_tensor_variable(transition_matrix)
+    ss_probs = compute_steady_state(P)
+    np.testing.assert_almost_equal(ss_probs.eval(), steady_state, 1)
