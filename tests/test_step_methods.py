@@ -8,7 +8,7 @@ import theano.tensor as tt
 from theano.graph.op import get_test_value
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, PoissonZeroProcess
-from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep, ffbs_astep
+from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep, ffbs_step
 from pymc3_hmm.utils import compute_steady_state, compute_trans_freqs
 from tests.utils import simulate_poiszero_hmm
 
@@ -24,7 +24,7 @@ def raise_under_overflow():
 pytestmark = pytest.mark.usefixtures("raise_under_overflow")
 
 
-def test_ffbs_astep():
+def test_ffbs_step():
 
     np.random.seed(2032)
 
@@ -36,13 +36,17 @@ def test_ffbs_astep():
     test_log_lik_0 = np.stack(
         [np.broadcast_to(0.0, 10000), np.broadcast_to(-np.inf, 10000)]
     )
-    res = ffbs_astep(test_gamma_0, test_Gammas, test_log_lik_0)
+    alphas = np.empty(test_log_lik_0.shape)
+    res = np.empty(test_log_lik_0.shape[-1])
+    ffbs_step(test_gamma_0, test_Gammas, test_log_lik_0, alphas, res)
     assert np.all(res == 0)
 
     test_log_lik_1 = np.stack(
         [np.broadcast_to(-np.inf, 10000), np.broadcast_to(0.0, 10000)]
     )
-    res = ffbs_astep(test_gamma_0, test_Gammas, test_log_lik_1)
+    alphas = np.empty(test_log_lik_1.shape)
+    res = np.empty(test_log_lik_1.shape[-1])
+    ffbs_step(test_gamma_0, test_Gammas, test_log_lik_1, alphas, res)
     assert np.all(res == 1)
 
     # A well-separated mixture with non-degenerate likelihoods
@@ -59,7 +63,9 @@ def test_ffbs_astep():
     # TODO FIXME: This is a statistically unsound/unstable check.
     assert np.mean(np.abs(test_log_lik_p.argmax(0) - test_seq)) < 1e-2
 
-    res = ffbs_astep(test_gamma_0, test_Gammas, test_log_lik_p)
+    alphas = np.empty(test_log_lik_p.shape)
+    res = np.empty(test_log_lik_p.shape[-1])
+    ffbs_step(test_gamma_0, test_Gammas, test_log_lik_p, alphas, res)
     # TODO FIXME: This is a statistically unsound/unstable check.
     assert np.mean(np.abs(res - test_seq)) < 1e-2
 
@@ -81,11 +87,36 @@ def test_ffbs_astep():
     test_log_lik[::2] = test_log_lik[::2][:, ::-1]
     test_log_lik = test_log_lik.T
 
-    res = ffbs_astep(test_gamma_0, test_Gammas, test_log_lik)
+    alphas = np.empty(test_log_lik.shape)
+    res = np.empty(test_log_lik.shape[-1])
+    ffbs_step(test_gamma_0, test_Gammas, test_log_lik, alphas, res)
     assert np.array_equal(res, np.r_[1, 0, 0, 1])
 
 
 def test_FFBSStep():
+
+    with pm.Model(), pytest.raises(ValueError):
+        P_rv = np.eye(2)[None, ...]
+        S_rv = DiscreteMarkovChain("S_t", P_rv, np.r_[1.0, 0.0], shape=10)
+        S_2_rv = DiscreteMarkovChain("S_2_t", P_rv, np.r_[0.0, 1.0], shape=10)
+        PoissonZeroProcess(
+            "Y_t", 9.0, S_rv + S_2_rv, observed=np.random.poisson(9.0, size=10)
+        )
+        # Only one variable can be sampled by this step method
+        ffbs = FFBSStep([S_rv, S_2_rv])
+
+    with pm.Model(), pytest.raises(TypeError):
+        S_rv = pm.Categorical("S_t", np.r_[1.0, 0.0], shape=10)
+        PoissonZeroProcess("Y_t", 9.0, S_rv, observed=np.random.poisson(9.0, size=10))
+        # Only `DiscreteMarkovChains` can be sampled with this step method
+        ffbs = FFBSStep([S_rv])
+
+    with pm.Model(), pytest.raises(TypeError):
+        P_rv = np.eye(2)[None, ...]
+        S_rv = DiscreteMarkovChain("S_t", P_rv, np.r_[1.0, 0.0], shape=10)
+        pm.Poisson("Y_t", S_rv, observed=np.random.poisson(9.0, size=10))
+        # Only `SwitchingProcess`es can used as dependent variables
+        ffbs = FFBSStep([S_rv])
 
     np.random.seed(2032)
 

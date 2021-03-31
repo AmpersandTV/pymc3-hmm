@@ -4,7 +4,8 @@ import numpy as np
 import pymc3 as pm
 import theano.scalar as ts
 import theano.tensor as tt
-from pymc3.step_methods.arraystep import ArrayStep, Competence
+from pymc3.distributions.distribution import draw_values
+from pymc3.step_methods.arraystep import ArrayStep, BlockedStep, Competence
 from pymc3.util import get_untransformed_name
 from theano.compile import optdb
 from theano.graph.basic import Variable, graph_inputs
@@ -16,33 +17,40 @@ from theano.tensor.elemwise import DimShuffle, Elemwise
 from theano.tensor.subtensor import AdvancedIncSubtensor1
 from theano.tensor.var import TensorConstant
 
-from pymc3_hmm.distributions import DiscreteMarkovChain
+from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.utils import compute_trans_freqs
 
 big: float = 1e20
 small: float = 1.0 / big
 
 
-def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
+def ffbs_step(
+    gamma_0: np.ndarray,
+    Gammas: np.ndarray,
+    log_lik: np.ndarray,
+    alphas: np.ndarray,
+    out: np.ndarray,
+):
     """Sample a forward-filtered backward-sampled (FFBS) state sequence.
 
     Parameters
     ----------
-    gamma_0: np.ndarray
+    gamma_0
         The initial state probabilities.
-    Gamma: np.ndarray
+    Gamma
         The transition probability matrices.  This array should take the shape
-        `(N, M, M)`, where `N` is the state sequence length and `M` is the number
-        of distinct states.  If `N` is `1`, the single transition matrix will
-        broadcast across all elements of the state sequence.
-    log_lik: np.ndarray
+        ``(N, M, M)``, where ``N`` is the state sequence length and ``M`` is
+        the number of distinct states.  If ``N`` is ``1``, the single
+        transition matrix will broadcast across all elements of the state
+        sequence.
+    log_lik
         An array of shape `(M, N)` consisting of the log-likelihood values for
         each state value at each point in the sequence.
-
-    Returns
-    -------
-    samples: np.ndarray
-        An array of shape `(N,)` containing the FFBS sampled state sequence.
+    alphas
+        An array in which to store the forward probabilities.
+    out
+        An output array to be updated in-place with the posterior sample
+        states.
 
     """
     # Number of observations
@@ -56,8 +64,6 @@ def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
     gamma_0_normed: np.ndarray = gamma_0.copy()
     gamma_0_normed /= np.sum(gamma_0)
 
-    # "Forward" probabilities
-    alphas: np.ndarray = np.empty((M, N), dtype=float)
     # Previous forward probability
     alpha_nm1: np.ndarray = gamma_0_normed
 
@@ -83,18 +89,15 @@ def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
         alpha_nm1 = alpha_n
         alphas[..., n] = alpha_n
 
-    # The FFBS samples
-    samples: np.ndarray = np.empty((N,), dtype=np.int8)
-
     # The uniform samples used to sample the categorical states
-    unif_samples: np.ndarray = np.random.uniform(size=samples.shape)
+    unif_samples: np.ndarray = np.random.uniform(size=out.shape)
 
     alpha_N: np.ndarray = alphas[..., N - 1]
     beta_N: np.ndarray = alpha_N / alpha_N.sum()
 
     state_np1: np.ndarray = np.searchsorted(beta_N.cumsum(), unif_samples[N - 1])
 
-    samples[N - 1] = state_np1
+    out[N - 1] = state_np1
 
     beta_n: np.ndarray = np.empty((M,), dtype=float)
 
@@ -104,12 +107,12 @@ def ffbs_astep(gamma_0: np.ndarray, Gammas: np.ndarray, log_lik: np.ndarray):
         beta_n /= np.sum(beta_n)
 
         state_np1 = np.searchsorted(beta_n.cumsum(), unif_samples[n])
-        samples[n] = state_np1
+        out[n] = state_np1
 
-    return samples
+    return out
 
 
-class FFBSStep(ArrayStep):
+class FFBSStep(BlockedStep):
     r"""Forward-filtering backward-sampling steps.
 
     For a hidden Markov model with state sequence :math:`S_t`, observations
@@ -126,11 +129,19 @@ class FFBSStep(ArrayStep):
 
     name = "ffbs"
 
-    def __init__(self, var, values=None, model=None):
+    def __init__(self, vars, values=None, model=None):
+
+        if len(vars) > 1:
+            raise ValueError("This sampler only takes one variable.")
+
+        (var,) = pm.inputvars(vars)
+
+        if not isinstance(var.distribution, DiscreteMarkovChain):
+            raise TypeError("This sampler only samples `DiscreteMarkovChain`s.")
 
         model = pm.modelcontext(model)
 
-        (var,) = pm.inputvars(var)
+        self.vars = [var]
 
         self.dependent_rvs = [
             v
@@ -138,32 +149,44 @@ class FFBSStep(ArrayStep):
             if v is not var and var in graph_inputs([v.logpt])
         ]
 
-        # We compile a function--from a Theano graph--that computes the
-        # total log-likelihood values for each state in the sequence.
-        dependents_log_lik = model.fn(
-            tt.sum([v.logp_elemwiset for v in self.dependent_rvs], axis=0)
-        )
+        dep_comps_logp_stacked = []
+        for i, dependent_rv in enumerate(self.dependent_rvs):
+            if isinstance(dependent_rv.distribution, SwitchingProcess):
+                comp_logps = []
 
+                # Get the log-likelihoood sequences for each state in this
+                # `SwitchingProcess` observations distribution
+                for comp_dist in dependent_rv.distribution.comp_dists:
+                    comp_logps.append(comp_dist.logp(dependent_rv))
+
+                comp_logp_stacked = tt.stack(comp_logps)
+            else:
+                raise TypeError(
+                    "This sampler only supports `SwitchingProcess` observations"
+                )
+
+            dep_comps_logp_stacked.append(comp_logp_stacked)
+
+        comp_logp_stacked = tt.sum(dep_comps_logp_stacked, axis=0)
+
+        (M,) = draw_values([var.distribution.gamma_0.shape[-1]], point=model.test_point)
+        N = model.test_point[var.name].shape[-1]
+        self.alphas = np.empty((M, N), dtype=float)
+
+        self.log_lik_states = model.fn(comp_logp_stacked)
         self.gamma_0_fn = model.fn(var.distribution.gamma_0)
         self.Gammas_fn = model.fn(var.distribution.Gammas)
 
-        super().__init__([var], [dependents_log_lik], allvars=True)
-
-    def astep(self, point, log_lik_fn, inputs):
-        gamma_0 = self.gamma_0_fn(inputs)
-        Gammas_t = self.Gammas_fn(inputs)
-
-        M = gamma_0.shape[-1]
-        N = point.shape[-1]
-
-        # TODO: Why won't broadcasting work with `log_lik_fn`?  Seems like we
-        # could be missing out on a much more efficient/faster approach to this
-        # potentially large computation.
-        # state_seqs = np.broadcast_to(np.arange(M, dtype=int)[..., None], (M, N))
-        # log_lik_t = log_lik_fn(state_seqs)
-        log_lik_t = np.stack([log_lik_fn(np.broadcast_to(m, N)) for m in range(M)])
-
-        return ffbs_astep(gamma_0, Gammas_t, log_lik_t)
+    def step(self, point):
+        gamma_0 = self.gamma_0_fn(point)
+        # TODO: Can we update these in-place (e.g. using a shared variable)?
+        Gammas_t = self.Gammas_fn(point)
+        # TODO: Can we update these in-place (e.g. using a shared variable)?
+        log_lik_state_vals = self.log_lik_states(point)
+        ffbs_step(
+            gamma_0, Gammas_t, log_lik_state_vals, self.alphas, point[self.vars[0].name]
+        )
+        return point
 
     @staticmethod
     def competence(var):
