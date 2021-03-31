@@ -113,7 +113,7 @@ def test_time_varying_model():
 
     sim_point = pm.sample_prior_predictive(samples=1, model=sim_model)
 
-    y_t = sim_point["Y_t"].squeeze()
+    y_t = sim_point["Y_t"].squeeze().astype(int)
 
     split = int(len(y_t) * 0.7)
 
@@ -155,7 +155,7 @@ def test_time_varying_model():
         )
 
     # Update the shared variable values
-    Y.set_value(np.ones(test_X.shape[0]))
+    Y.set_value(np.ones(test_X.shape[0], dtype=Y.dtype))
     X.set_value(test_X)
 
     model.V_t.distribution.shape = (test_X.shape[0],)
