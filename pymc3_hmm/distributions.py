@@ -8,6 +8,7 @@ from pymc3.distributions.distribution import _DrawValuesContext, draw_values
 from pymc3.distributions.mixture import _conversion_map, all_discrete
 from theano.graph.op import get_test_value
 from theano.graph.utils import TestValueError
+from theano.scalar import upcast
 
 from pymc3_hmm.utils import (
     broadcast_to,
@@ -148,11 +149,10 @@ class SwitchingProcess(pm.Distribution):
 
         defaults = kwargs.pop("defaults", [])
 
-        if all_discrete(comp_dists):
-            default_dtype = _conversion_map[theano.config.floatX]
-        else:
-            default_dtype = theano.config.floatX
+        out_dtype = upcast(*[x.type.dtype for x in comp_dists])
+        dtype = kwargs.pop("dtype", out_dtype)
 
+        if not all_discrete(comp_dists):
             try:
                 bcast_means = tt_broadcast_arrays(
                     *([self.states] + [d.mean for d in self.comp_dists])
@@ -164,8 +164,6 @@ class SwitchingProcess(pm.Distribution):
 
             except (AttributeError, ValueError, IndexError):  # pragma: no cover
                 pass
-
-        dtype = kwargs.pop("dtype", default_dtype)
 
         try:
             bcast_modes = tt_broadcast_arrays(
