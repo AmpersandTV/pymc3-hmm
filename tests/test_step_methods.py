@@ -1,11 +1,17 @@
 import warnings
 
 import numpy as np
+
+try:
+    import aesara.tensor as at
+    from aesara.graph.op import get_test_value
+except ImportError:
+    import theano.tensor as at
+    from theano.graph.op import get_test_value
+
 import pymc3 as pm
 import pytest
 import scipy as sp
-import theano.tensor as tt
-from theano.graph.op import get_test_value
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, PoissonZeroProcess
 from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep, ffbs_step
@@ -127,8 +133,8 @@ def test_FFBSStep():
         p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
-        P_tt = tt.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
+        P_tt = at.stack([p_0_rv, p_1_rv])
+        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
 
         pi_0_tt = compute_steady_state(P_rv)
 
@@ -161,8 +167,8 @@ def test_FFBSStep_extreme():
         p_0_rv = poiszero_sim["p_0"]
         p_1_rv = poiszero_sim["p_1"]
 
-        P_tt = tt.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
+        P_tt = at.stack([p_0_rv, p_1_rv])
+        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
 
         pi_0_tt = poiszero_sim["pi_0"]
 
@@ -225,8 +231,8 @@ def test_TransMatConjugateStep():
         p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
-        P_tt = tt.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
+        P_tt = at.stack([p_0_rv, p_1_rv])
+        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
 
         pi_0_tt = compute_steady_state(P_rv)
 
@@ -268,14 +274,14 @@ def test_TransMatConjugateStep_subtensors():
         d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
-        p_0_rv = tt.as_tensor([0, 0, 1])
-        p_1_rv = tt.zeros(3)
-        p_1_rv = tt.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
-        p_2_rv = tt.zeros(3)
-        p_2_rv = tt.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
+        p_0_rv = at.as_tensor([0, 0, 1])
+        p_1_rv = at.zeros(3)
+        p_1_rv = at.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
+        p_2_rv = at.zeros(3)
+        p_2_rv = at.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
 
-        P_tt = tt.stack([p_0_rv, p_1_rv, p_2_rv])
-        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
+        P_tt = at.stack([p_0_rv, p_1_rv, p_2_rv])
+        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
         DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
 
         transmat = TransMatConjugateStep(P_rv)
@@ -292,16 +298,16 @@ def test_TransMatConjugateStep_subtensors():
         d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
-        p_0_rv = tt.as_tensor([0, 0, 1])
-        p_1_rv = tt.zeros(3)
-        p_1_rv = tt.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
-        p_2_rv = tt.zeros(3)
-        p_2_rv = tt.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
+        p_0_rv = at.as_tensor([0, 0, 1])
+        p_1_rv = at.zeros(3)
+        p_1_rv = at.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
+        p_2_rv = at.zeros(3)
+        p_2_rv = at.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
 
-        P_tt = tt.horizontal_stack(
+        P_tt = at.horizontal_stack(
             p_0_rv[..., None], p_1_rv[..., None], p_2_rv[..., None]
         )
-        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt.T))
+        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt.T))
         DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
 
         transmat = TransMatConjugateStep(P_rv)
@@ -318,16 +324,16 @@ def test_TransMatConjugateStep_subtensors():
         d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
-        p_0_rv = tt.as_tensor([0, 0, 1])
-        p_1_rv = tt.zeros(3)
-        p_1_rv = tt.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
-        p_2_rv = tt.zeros(3)
-        p_2_rv = tt.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
+        p_0_rv = at.as_tensor([0, 0, 1])
+        p_1_rv = at.zeros(3)
+        p_1_rv = at.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
+        p_2_rv = at.zeros(3)
+        p_2_rv = at.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
 
-        P_tt = tt.horizontal_stack(
+        P_tt = at.horizontal_stack(
             p_0_rv[..., None], p_1_rv[..., None], p_2_rv[..., None]
         )
-        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt.T))
+        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt.T))
         DiscreteMarkovChain(
             "S_t", P_rv, np.r_[1, 0, 0], shape=(4,), observed=np.r_[0, 1, 0, 2]
         )

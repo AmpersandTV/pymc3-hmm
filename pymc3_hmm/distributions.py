@@ -1,15 +1,25 @@
 import warnings
 
 import numpy as np
+
+try:  # pragma: no cover
+    import aesara
+    import aesara.tensor as at
+    from aesara.graph.op import get_test_value
+    from aesara.graph.utils import TestValueError
+    from aesara.scalar import upcast
+    from aesara.tensor.extra_ops import broadcast_to as at_broadcast_to
+except ImportError:  # pragma: no cover
+    import theano as aesara
+    import theano.tensor as at
+    from theano.graph.op import get_test_value
+    from theano.graph.utils import TestValueError
+    from theano.scalar import upcast
+    from theano.tensor.extra_ops import broadcast_to as at_broadcast_to
+
 import pymc3 as pm
-import theano
-import theano.tensor as tt
 from pymc3.distributions.distribution import _DrawValuesContext, draw_values
 from pymc3.distributions.mixture import _conversion_map, all_discrete
-from theano.graph.op import get_test_value
-from theano.graph.utils import TestValueError
-from theano.scalar import upcast
-from theano.tensor.extra_ops import broadcast_to as tt_broadcast_to
 
 from pymc3_hmm.utils import tt_broadcast_arrays, tt_expand_dims, vsearchsorted
 
@@ -73,7 +83,7 @@ def distribution_subset_args(dist, shape, idx, point=None):
         else:
             x = point[param]
 
-        bcast_res = tt_broadcast_to(x, shape)
+        bcast_res = at_broadcast_to(x, shape)
 
         res.append(bcast_res[idx])
 
@@ -121,7 +131,7 @@ class SwitchingProcess(pm.Distribution):
             equal to the size of `comp_dists`.
 
         """
-        self.states = tt.as_tensor_variable(pm.intX(states))
+        self.states = at.as_tensor_variable(pm.intX(states))
 
         if len(comp_dists) > 31:
             warnings.warn(
@@ -147,7 +157,7 @@ class SwitchingProcess(pm.Distribution):
                 bcast_means = tt_broadcast_arrays(
                     *([self.states] + [d.mean.astype(dtype) for d in self.comp_dists])
                 )
-                self.mean = tt.choose(self.states, bcast_means[1:])
+                self.mean = at.choose(self.states, bcast_means[1:])
 
                 if "mean" not in defaults:
                     defaults.append("mean")
@@ -159,7 +169,7 @@ class SwitchingProcess(pm.Distribution):
             bcast_modes = tt_broadcast_arrays(
                 *([self.states] + [d.mode.astype(dtype) for d in self.comp_dists])
             )
-            self.mode = tt.choose(self.states, bcast_modes[1:])
+            self.mode = at.choose(self.states, bcast_modes[1:])
 
             if "mode" not in defaults:
                 defaults.append("mode")
@@ -172,15 +182,15 @@ class SwitchingProcess(pm.Distribution):
     def logp(self, obs):
         """Return the scalar Theano log-likelihood at a point."""
 
-        obs_tt = tt.as_tensor_variable(obs)
+        obs_tt = at.as_tensor_variable(obs)
 
-        logp_val = tt.alloc(-np.inf, *obs.shape)
+        logp_val = at.alloc(-np.inf, *obs.shape)
 
         for i, dist in enumerate(self.comp_dists):
-            i_mask = tt.eq(self.states, i)
+            i_mask = at.eq(self.states, i)
             obs_i = obs_tt[i_mask]
             subset_dist = dist.dist(*distribution_subset_args(dist, obs.shape, i_mask))
-            logp_val = tt.set_subtensor(logp_val[i_mask], subset_dist.logp(obs_i))
+            logp_val = at.set_subtensor(logp_val[i_mask], subset_dist.logp(obs_i))
 
         return logp_val
 
@@ -265,8 +275,8 @@ class PoissonZeroProcess(SwitchingProcess):
             A vector of integer 0-1 states that indicate which component of
             the mixture is active at each point/time.
         """
-        self.mu = tt.as_tensor_variable(pm.floatX(mu))
-        self.states = tt.as_tensor_variable(states)
+        self.mu = at.as_tensor_variable(pm.floatX(mu))
+        self.states = at.as_tensor_variable(states)
 
         super().__init__([pm.Constant.dist(0), pm.Poisson.dist(mu)], states, **kwargs)
 
@@ -298,15 +308,15 @@ class DiscreteMarkovChain(pm.Discrete):
             Shape of the state sequence.  The last dimension is `N`, i.e. the
             length of the state sequence(s).
         """
-        self.gamma_0 = tt.as_tensor_variable(pm.floatX(gamma_0))
+        self.gamma_0 = at.as_tensor_variable(pm.floatX(gamma_0))
 
         assert Gammas.ndim >= 3
 
-        self.Gammas = tt.as_tensor_variable(pm.floatX(Gammas))
+        self.Gammas = at.as_tensor_variable(pm.floatX(Gammas))
 
         shape = np.atleast_1d(shape)
 
-        dtype = _conversion_map[theano.config.floatX]
+        dtype = _conversion_map[aesara.config.floatX]
         self.mode = np.zeros(tuple(shape), dtype=dtype)
 
         super().__init__(shape=shape, **kwargs)
@@ -330,7 +340,7 @@ class DiscreteMarkovChain(pm.Discrete):
 
         """  # noqa: E501
 
-        Gammas = tt.shape_padleft(self.Gammas, states.ndim - (self.Gammas.ndim - 2))
+        Gammas = at.shape_padleft(self.Gammas, states.ndim - (self.Gammas.ndim - 2))
 
         # Multiply the initial state probabilities by the first transition
         # matrix by to get the marginal probability for state `S_1`.
@@ -338,36 +348,36 @@ class DiscreteMarkovChain(pm.Discrete):
         # `gamma_0.dot(Gammas[0])`
         Gamma_1 = Gammas[..., 0:1, :, :]
         gamma_0 = tt_expand_dims(self.gamma_0, (-3, -1))
-        P_S_1 = tt.sum(gamma_0 * Gamma_1, axis=-2)
+        P_S_1 = at.sum(gamma_0 * Gamma_1, axis=-2)
 
         # The `tt.switch`s allow us to broadcast the indexing operation when
         # the replication dimensions of `states` and `Gammas` don't match
         # (e.g. `states.shape[0] > Gammas.shape[0]`)
         S_1_slices = tuple(
             slice(
-                tt.switch(tt.eq(P_S_1.shape[i], 1), 0, 0),
-                tt.switch(tt.eq(P_S_1.shape[i], 1), 1, d),
+                at.switch(at.eq(P_S_1.shape[i], 1), 0, 0),
+                at.switch(at.eq(P_S_1.shape[i], 1), 1, d),
             )
             for i, d in enumerate(states.shape)
         )
-        S_1_slices = (tuple(tt.ogrid[S_1_slices]) if S_1_slices else tuple()) + (
+        S_1_slices = (tuple(at.ogrid[S_1_slices]) if S_1_slices else tuple()) + (
             states[..., 0:1],
         )
-        logp_S_1 = tt.log(P_S_1[S_1_slices]).sum(axis=-1)
+        logp_S_1 = at.log(P_S_1[S_1_slices]).sum(axis=-1)
 
         # These are slices for the extra dimensions--including the state
         # sequence dimension (e.g. "time")--along which which we need to index
         # the transition matrix rows using the "observed" `states`.
         trans_slices = tuple(
             slice(
-                tt.switch(
-                    tt.eq(Gammas.shape[i], 1), 0, 1 if i == states.ndim - 1 else 0
+                at.switch(
+                    at.eq(Gammas.shape[i], 1), 0, 1 if i == states.ndim - 1 else 0
                 ),
-                tt.switch(tt.eq(Gammas.shape[i], 1), 1, d),
+                at.switch(at.eq(Gammas.shape[i], 1), 1, d),
             )
             for i, d in enumerate(states.shape)
         )
-        trans_slices = (tuple(tt.ogrid[trans_slices]) if trans_slices else tuple()) + (
+        trans_slices = (tuple(at.ogrid[trans_slices]) if trans_slices else tuple()) + (
             states[..., :-1],
         )
 
@@ -376,12 +386,12 @@ class DiscreteMarkovChain(pm.Discrete):
         P_S_2T = Gammas[trans_slices]
 
         obs_slices = tuple(slice(None, d) for d in P_S_2T.shape[:-1])
-        obs_slices = (tuple(tt.ogrid[obs_slices]) if obs_slices else tuple()) + (
+        obs_slices = (tuple(at.ogrid[obs_slices]) if obs_slices else tuple()) + (
             states[..., 1:],
         )
-        logp_S_1T = tt.log(P_S_2T[obs_slices])
+        logp_S_1T = at.log(P_S_2T[obs_slices])
 
-        res = logp_S_1 + tt.sum(logp_S_1T, axis=-1)
+        res = logp_S_1 + at.sum(logp_S_1T, axis=-1)
         res.name = "DiscreteMarkovChain_logp"
 
         return res
