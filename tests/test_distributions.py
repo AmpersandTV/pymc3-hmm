@@ -1,8 +1,14 @@
 import numpy as np
+
+try:
+    import aesara
+    import aesara.tensor as at
+except ImportError:
+    import theano as aesara
+    import theano.tensor as at
+
 import pymc3 as pm
 import pytest
-import theano
-import theano.tensor as tt
 
 from pymc3_hmm.distributions import (
     DiscreteMarkovChain,
@@ -14,8 +20,8 @@ from tests.utils import simulate_poiszero_hmm
 
 
 def test_DiscreteMarkovChain_str():
-    Gammas = tt.as_tensor(np.eye(2)[None, ...], name="Gammas")
-    gamma_0 = tt.as_tensor(np.r_[0, 1], name="gamma_0")
+    Gammas = at.as_tensor(np.eye(2)[None, ...], name="Gammas")
+    gamma_0 = at.as_tensor(np.r_[0, 1], name="gamma_0")
 
     with pm.Model():
         test_dist = DiscreteMarkovChain("P_rv", Gammas, gamma_0, shape=(2,))
@@ -180,7 +186,7 @@ def test_DiscreteMarkovChain_random():
 
 
 def test_DiscreteMarkovChain_point():
-    test_Gammas = tt.as_tensor_variable(np.array([[[1.0, 0.0], [0.0, 1.0]]]))
+    test_Gammas = at.as_tensor_variable(np.array([[[1.0, 0.0], [0.0, 1.0]]]))
 
     with pm.Model():
         # XXX: `draw_values` won't use the `Deterministic`s values in the `point` map!
@@ -202,7 +208,7 @@ def test_DiscreteMarkovChain_point():
 
 
 def test_DiscreteMarkovChain_logp():
-    theano.config.compute_test_value = "warn"
+    aesara.config.compute_test_value = "warn"
 
     # A single transition matrix and initial probabilities vector for each
     # element in the state sequence
@@ -511,9 +517,9 @@ def test_SwitchingProcess():
     with pytest.raises(TypeError):
         SwitchingProcess.dist([1], test_states)
 
-    with theano.change_flags(compute_test_value="off"):
+    with aesara.change_flags(compute_test_value="off"):
         # Test for the case when a default can't be computed
-        test_dist = pm.Poisson.dist(tt.scalar())
+        test_dist = pm.Poisson.dist(at.scalar())
 
         # Confirm that there's no default
         with pytest.raises(AttributeError):
@@ -524,7 +530,7 @@ def test_SwitchingProcess():
             SwitchingProcess.dist([test_dist], test_states)
 
     # Evaluate multiple observed state sequences in an extreme case
-    test_states = tt.imatrix("states")
+    test_states = at.imatrix("states")
     test_states.tag.test_value = np.zeros((10, 4)).astype("int32")
     test_dist = SwitchingProcess.dist(
         [pm.Constant.dist(0), pm.Constant.dist(1)], test_states
@@ -532,7 +538,7 @@ def test_SwitchingProcess():
     test_obs = np.tile(np.arange(4), (10, 1)).astype("int32")
     test_logp = test_dist.logp(test_obs)
     exp_logp = np.tile(
-        np.array([0.0] + [-np.inf] * 3, dtype=theano.config.floatX), (10, 1)
+        np.array([0.0] + [-np.inf] * 3, dtype=aesara.config.floatX), (10, 1)
     )
     assert np.array_equal(test_logp.tag.test_value, exp_logp)
 
