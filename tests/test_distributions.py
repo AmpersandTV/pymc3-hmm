@@ -1,5 +1,5 @@
 import aesara
-import aesara.tensor as tt
+import aesara.tensor as at
 import numpy as np
 import pymc3 as pm
 import pytest
