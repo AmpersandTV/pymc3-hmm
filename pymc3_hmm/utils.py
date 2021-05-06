@@ -1,6 +1,6 @@
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-import aesara.tensor as tt
+import aesara.tensor as at
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -28,8 +28,8 @@ def compute_steady_state(P):
 
     P = P[0]
     N_states = P.shape[-1]
-    Lam = (tt.eye(N_states) - P + tt.ones((N_states, N_states))).T
-    u = tt.slinalg.solve(Lam, tt.ones((N_states,)))
+    Lam = (at.eye(N_states) - P + at.ones((N_states, N_states))).T
+    u = at.slinalg.solve(Lam, at.ones((N_states,)))
     return u
 
 
@@ -79,15 +79,15 @@ def compute_trans_freqs(states, N_states, counts_only=False):
 
 def tt_logsumexp(x, axis=None, keepdims=False):
     """Construct a Theano graph for a log-sum-exp calculation."""
-    x_max_ = tt.max(x, axis=axis, keepdims=True)
+    x_max_ = at.max(x, axis=axis, keepdims=True)
 
     if x_max_.ndim > 0:
-        x_max_ = tt.set_subtensor(x_max_[tt.isinf(x_max_)], 0.0)
-    elif tt.isinf(x_max_):
-        x_max_ = tt.as_tensor(0.0)
+        x_max_ = at.set_subtensor(x_max_[at.isinf(x_max_)], 0.0)
+    elif at.isinf(x_max_):
+        x_max_ = at.as_tensor(0.0)
 
-    res = tt.sum(tt.exp(x - x_max_), axis=axis, keepdims=keepdims)
-    res = tt.log(res)
+    res = at.sum(at.exp(x - x_max_), axis=axis, keepdims=keepdims)
+    res = at.log(res)
 
     if not keepdims:
         # SciPy uses the `axis` keyword here, but Theano doesn't support that.
@@ -183,16 +183,16 @@ def tt_broadcast_arrays(*args: TensorVariable):
     p = max(a.ndim for a in args)
 
     args = tuple(
-        tt.shape_padleft(a, n_ones=p - a.ndim) if a.ndim < p else a for a in args
+        at.shape_padleft(a, n_ones=p - a.ndim) if a.ndim < p else a for a in args
     )
 
     bcast_shape = [None] * p
     for i in range(p - 1, -1, -1):
         non_bcast_args = [tuple(a.shape)[i] for a in args if not a.broadcastable[i]]
-        bcast_shape[i] = tt.max([1] + non_bcast_args)
+        bcast_shape[i] = at.max([1] + non_bcast_args)
 
     # TODO: This could be very costly?
-    return [a * tt.ones(bcast_shape) for a in args]
+    return [a * at.ones(bcast_shape) for a in args]
 
 
 def broadcast_to(x, shape):
@@ -212,7 +212,7 @@ def broadcast_to(x, shape):
         return np.broadcast_to(x, shape)  # pragma: no cover
     else:
         # TODO: This could be very costly?
-        return x * tt.ones(shape)
+        return x * at.ones(shape)
 
 
 def multilogit_inv(ys):
@@ -235,7 +235,7 @@ def multilogit_inv(ys):
         lib = np
         lib_logsumexp = logsumexp
     else:
-        lib = tt
+        lib = at
         lib_logsumexp = tt_logsumexp
 
     # exp_ys = lib.exp(ys)

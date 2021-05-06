@@ -1,7 +1,11 @@
 from datetime import date, timedelta
 
-import aesara
-import aesara.tensor as tt
+try:
+    import theano as aesara
+except ImportError:
+    import aesara
+
+import aesara.tensor as at
 import arviz as az
 import numpy as np
 import pandas as pd
@@ -29,7 +33,7 @@ def gen_toy_data(days=-7 * 10):
 
 def create_dirac_zero_hmm(X, mu, xis, observed):
     S = 2
-    z_tt = tt.stack([tt.dot(X, xis[..., s, :]) for s in range(S)], axis=1)
+    z_tt = at.stack([at.dot(X, xis[..., s, :]) for s in range(S)], axis=1)
     Gammas_tt = pm.Deterministic("Gamma", multilogit_inv(z_tt))
     gamma_0_rv = pm.Dirichlet("gamma_0", np.ones((S,)))
 
@@ -62,8 +66,8 @@ def test_only_positive_state():
         p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
         p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
 
-        P_tt = tt.stack([p_0_rv, p_1_rv])
-        Gammas_tt = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
+        P_tt = at.stack([p_0_rv, p_1_rv])
+        Gammas_tt = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
 
         gamma_0_rv = pm.Dirichlet("gamma_0", np.ones((S,)))
 

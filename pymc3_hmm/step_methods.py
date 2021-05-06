@@ -1,7 +1,7 @@
 from itertools import chain
 
 import aesara.scalar as ts
-import aesara.tensor as tt
+import aesara.tensor as at
 import numpy as np
 import pymc3 as pm
 from aesara.compile import optdb
@@ -159,7 +159,7 @@ class FFBSStep(BlockedStep):
                 for comp_dist in dependent_rv.distribution.comp_dists:
                     comp_logps.append(comp_dist.logp(dependent_rv))
 
-                comp_logp_stacked = tt.stack(comp_logps)
+                comp_logp_stacked = at.stack(comp_logps)
             else:
                 raise TypeError(
                     "This sampler only supports `SwitchingProcess` observations"
@@ -167,7 +167,7 @@ class FFBSStep(BlockedStep):
 
             dep_comps_logp_stacked.append(comp_logp_stacked)
 
-        comp_logp_stacked = tt.sum(dep_comps_logp_stacked, axis=0)
+        comp_logp_stacked = at.sum(dep_comps_logp_stacked, axis=0)
 
         (M,) = draw_values([var.distribution.gamma_0.shape[-1]], point=model.test_point)
         N = model.test_point[var.name].shape[-1]
@@ -352,7 +352,7 @@ class TransMatConjugateStep(ArrayStep):
 
         Gamma_Join = Gamma_DimShuffle.inputs[0].owner
 
-        if not (isinstance(Gamma_Join.op, tt.basic.Join)):
+        if not (isinstance(Gamma_Join.op, at.basic.Join)):
             raise TypeError(
                 "The transition matrix should be comprised of stacked row vectors"
             )

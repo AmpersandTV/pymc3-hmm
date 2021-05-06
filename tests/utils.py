@@ -1,4 +1,4 @@
-import aesara.tensor as tt
+import aesara.tensor as at
 import numpy as np
 import pymc3 as pm
 
@@ -13,8 +13,8 @@ def simulate_poiszero_hmm(
         p_0_rv = pm.Dirichlet("p_0", p_0_a)
         p_1_rv = pm.Dirichlet("p_1", p_1_a)
 
-        P_tt = tt.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
+        P_tt = at.stack([p_0_rv, p_1_rv])
+        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
 
         pi_0_tt = pm.Dirichlet("pi_0", pi_0_a)
 

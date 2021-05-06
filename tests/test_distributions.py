@@ -1,5 +1,9 @@
-import aesara
-import aesara.tensor as tt
+try:
+    import theano as aesara
+except ImportError:
+    import aesara
+
+import aesara.tensor as at
 import numpy as np
 import pymc3 as pm
 import pytest
@@ -14,8 +18,8 @@ from tests.utils import simulate_poiszero_hmm
 
 
 def test_DiscreteMarkovChain_str():
-    Gammas = tt.as_tensor(np.eye(2)[None, ...], name="Gammas")
-    gamma_0 = tt.as_tensor(np.r_[0, 1], name="gamma_0")
+    Gammas = at.as_tensor(np.eye(2)[None, ...], name="Gammas")
+    gamma_0 = at.as_tensor(np.r_[0, 1], name="gamma_0")
 
     with pm.Model():
         test_dist = DiscreteMarkovChain("P_rv", Gammas, gamma_0, shape=(2,))
@@ -180,7 +184,7 @@ def test_DiscreteMarkovChain_random():
 
 
 def test_DiscreteMarkovChain_point():
-    test_Gammas = tt.as_tensor_variable(np.array([[[1.0, 0.0], [0.0, 1.0]]]))
+    test_Gammas = at.as_tensor_variable(np.array([[[1.0, 0.0], [0.0, 1.0]]]))
 
     with pm.Model():
         # XXX: `draw_values` won't use the `Deterministic`s values in the `point` map!
@@ -513,7 +517,7 @@ def test_SwitchingProcess():
 
     with aesara.change_flags(compute_test_value="off"):
         # Test for the case when a default can't be computed
-        test_dist = pm.Poisson.dist(tt.scalar())
+        test_dist = pm.Poisson.dist(at.scalar())
 
         # Confirm that there's no default
         with pytest.raises(AttributeError):
@@ -524,7 +528,7 @@ def test_SwitchingProcess():
             SwitchingProcess.dist([test_dist], test_states)
 
     # Evaluate multiple observed state sequences in an extreme case
-    test_states = tt.imatrix("states")
+    test_states = at.imatrix("states")
     test_states.tag.test_value = np.zeros((10, 4)).astype("int32")
     test_dist = SwitchingProcess.dist(
         [pm.Constant.dist(0), pm.Constant.dist(1)], test_states
