@@ -1,21 +1,21 @@
 from itertools import chain
 
+import aesara.scalar as ts
+import aesara.tensor as tt
 import numpy as np
 import pymc3 as pm
-import theano.scalar as ts
-import theano.tensor as tt
+from aesara.compile import optdb
+from aesara.graph.basic import Variable, graph_inputs
+from aesara.graph.fg import FunctionGraph
+from aesara.graph.op import get_test_value as test_value
+from aesara.graph.opt import OpRemove, pre_greedy_local_optimizer
+from aesara.graph.optdb import Query
+from aesara.tensor.elemwise import DimShuffle, Elemwise
+from aesara.tensor.subtensor import AdvancedIncSubtensor1
+from aesara.tensor.var import TensorConstant
 from pymc3.distributions.distribution import draw_values
 from pymc3.step_methods.arraystep import ArrayStep, BlockedStep, Competence
 from pymc3.util import get_untransformed_name
-from theano.compile import optdb
-from theano.graph.basic import Variable, graph_inputs
-from theano.graph.fg import FunctionGraph
-from theano.graph.op import get_test_value as test_value
-from theano.graph.opt import OpRemove, pre_greedy_local_optimizer
-from theano.graph.optdb import Query
-from theano.tensor.elemwise import DimShuffle, Elemwise
-from theano.tensor.subtensor import AdvancedIncSubtensor1
-from theano.tensor.var import TensorConstant
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.utils import compute_trans_freqs

@@ -1,6 +1,6 @@
+import aesara.tensor as tt
 import numpy as np
 import pymc3 as pm
-import theano.tensor as tt
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, PoissonZeroProcess
 

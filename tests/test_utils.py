@@ -1,8 +1,8 @@
+import aesara
+import aesara.tensor as tt
 import numpy as np
 import pytest
 import scipy as sp
-import theano
-import theano.tensor as tt
 
 from pymc3_hmm.utils import (
     compute_trans_freqs,
@@ -68,7 +68,7 @@ def test_tt_logdotexp():
 
     np.seterr(over="ignore", under="ignore")
 
-    theano.config.compute_test_value = "warn"
+    aesara.config.compute_test_value = "warn"
 
     A = np.c_[[1.0, 2.0], [3.0, 4.0], [10.0, 20.0]]
     b = np.c_[[0.1], [0.2], [30.0]].T

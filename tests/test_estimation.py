@@ -1,13 +1,13 @@
 from datetime import date, timedelta
 
+import aesara
+import aesara.tensor as tt
 import arviz as az
 import numpy as np
 import pandas as pd
 import patsy
 import pymc3 as pm
-import theano
-import theano.tensor as tt
-from theano import shared
+from aesara import shared
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.step_methods import FFBSStep
@@ -168,7 +168,7 @@ def test_time_varying_model():
 
     trace = posterior_trace.posterior.drop_vars(["Gamma", "V_t"])
 
-    with theano.config.change_flags(compute_test_value="off"):
+    with aesara.config.change_flags(compute_test_value="off"):
         adds_pois_ppc = pm.sample_posterior_predictive(
             trace, var_names=["V_t", "Y_t", "Gamma"], model=model
         )

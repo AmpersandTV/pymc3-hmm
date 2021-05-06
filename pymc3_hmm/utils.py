@@ -1,14 +1,14 @@
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+import aesara.tensor as tt
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import theano.tensor as tt
+from aesara.tensor.var import TensorVariable
 from matplotlib import cm
 from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
 from scipy.special import logsumexp
-from theano.tensor.var import TensorVariable
 
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[int], signature="(n),()->()")
 

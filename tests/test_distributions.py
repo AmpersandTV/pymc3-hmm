@@ -1,8 +1,8 @@
+import aesara
+import aesara.tensor as tt
 import numpy as np
 import pymc3 as pm
 import pytest
-import theano
-import theano.tensor as tt
 
 from pymc3_hmm.distributions import (
     DiscreteMarkovChain,
@@ -202,7 +202,7 @@ def test_DiscreteMarkovChain_point():
 
 
 def test_DiscreteMarkovChain_logp():
-    theano.config.compute_test_value = "warn"
+    aesara.config.compute_test_value = "warn"
 
     # A single transition matrix and initial probabilities vector for each
     # element in the state sequence
@@ -511,7 +511,7 @@ def test_SwitchingProcess():
     with pytest.raises(TypeError):
         SwitchingProcess.dist([1], test_states)
 
-    with theano.change_flags(compute_test_value="off"):
+    with aesara.change_flags(compute_test_value="off"):
         # Test for the case when a default can't be computed
         test_dist = pm.Poisson.dist(tt.scalar())
 
@@ -532,7 +532,7 @@ def test_SwitchingProcess():
     test_obs = np.tile(np.arange(4), (10, 1)).astype("int32")
     test_logp = test_dist.logp(test_obs)
     exp_logp = np.tile(
-        np.array([0.0] + [-np.inf] * 3, dtype=theano.config.floatX), (10, 1)
+        np.array([0.0] + [-np.inf] * 3, dtype=aesara.config.floatX), (10, 1)
     )
     assert np.array_equal(test_logp.tag.test_value, exp_logp)
 

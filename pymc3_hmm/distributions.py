@@ -1,14 +1,14 @@
 import warnings
 
+import aesara
+import aesara.tensor as tt
 import numpy as np
 import pymc3 as pm
-import theano
-import theano.tensor as tt
+from aesara.graph.op import get_test_value
+from aesara.graph.utils import TestValueError
+from aesara.scalar import upcast
 from pymc3.distributions.distribution import _DrawValuesContext, draw_values
 from pymc3.distributions.mixture import _conversion_map, all_discrete
-from theano.graph.op import get_test_value
-from theano.graph.utils import TestValueError
-from theano.scalar import upcast
 
 from pymc3_hmm.utils import (
     broadcast_to,
@@ -316,7 +316,7 @@ class DiscreteMarkovChain(pm.Discrete):
 
         shape = np.atleast_1d(shape)
 
-        dtype = _conversion_map[theano.config.floatX]
+        dtype = _conversion_map[aesara.config.floatX]
         self.mode = tt.zeros(tuple(shape), dtype=dtype)
 
         super().__init__(shape=shape, **kwargs)
