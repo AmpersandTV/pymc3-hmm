@@ -18,8 +18,6 @@ setup(
         "numpy>=1.18.1",
         "scipy>=1.4.0",
         "pymc3==3.11.2",
-        "theano-pymc>=1.1.0",
-        "aesara==2.0.7",
     ],
     tests_require=["pytest"],
     long_description=open("README.md").read() if exists("README.md") else "",
