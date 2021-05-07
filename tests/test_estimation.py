@@ -5,13 +5,21 @@ try:
 except ImportError:
     import aesara
 
-import aesara.tensor as at
+try:
+    import theano.tensor as at
+except ImportError:
+    import aesara.tensor as at
+
 import arviz as az
 import numpy as np
 import pandas as pd
 import patsy
 import pymc3 as pm
-from aesara import shared
+
+try:
+    from theano import shared
+except ImportError:
+    from aesara import shared
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.step_methods import FFBSStep

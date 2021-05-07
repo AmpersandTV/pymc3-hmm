@@ -3,7 +3,11 @@ try:
 except ImportError:
     import aesara
 
-import aesara.tensor as at
+try:
+    import theano.tensor as at
+except ImportError:
+    import aesara.tensor as at
+
 import numpy as np
 import pytest
 import scipy as sp

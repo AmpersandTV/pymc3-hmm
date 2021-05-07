@@ -1,18 +1,63 @@
 from itertools import chain
 
-import aesara.scalar as ts
-import aesara.tensor as at
+try:
+    import theano.scalar as ts
+except ImportError:
+    import aesara.scalar as ts
+
+try:
+    import theano.tensor as at
+except ImportError:
+    import aesara.tensor as at
+
 import numpy as np
 import pymc3 as pm
-from aesara.compile import optdb
-from aesara.graph.basic import Variable, graph_inputs
-from aesara.graph.fg import FunctionGraph
-from aesara.graph.op import get_test_value as test_value
-from aesara.graph.opt import OpRemove, pre_greedy_local_optimizer
-from aesara.graph.optdb import Query
-from aesara.tensor.elemwise import DimShuffle, Elemwise
-from aesara.tensor.subtensor import AdvancedIncSubtensor1
-from aesara.tensor.var import TensorConstant
+
+try:
+    from theano.compile import optdb
+except ImportError:
+    from aesara.compile import optdb
+
+try:
+    from theano.graph.basic import Variable, graph_inputs
+except ImportError:
+    from aesara.graph.basic import Variable, graph_inputs
+
+try:
+    from theano.graph.fg import FunctionGraph
+except ImportError:
+    from aesara.graph.fg import FunctionGraph
+
+try:
+    from theano.graph.op import get_test_value as test_value
+except ImportError:
+    from aesara.graph.op import get_test_value as test_value
+
+try:
+    from theano.graph.opt import OpRemove, pre_greedy_local_optimizer
+except ImportError:
+    from aesara.graph.opt import OpRemove, pre_greedy_local_optimizer
+
+try:
+    from theano.graph.optdb import Query
+except ImportError:
+    from aesara.graph.optdb import Query
+
+try:
+    from theano.tensor.elemwise import DimShuffle, Elemwise
+except ImportError:
+    from aesara.tensor.elemwise import DimShuffle, Elemwise
+
+try:
+    from theano.tensor.subtensor import AdvancedIncSubtensor1
+except ImportError:
+    from aesara.tensor.subtensor import AdvancedIncSubtensor1
+
+try:
+    from theano.tensor.var import TensorConstant
+except ImportError:
+    from aesara.tensor.var import TensorConstant
+
 from pymc3.distributions.distribution import draw_values
 from pymc3.step_methods.arraystep import ArrayStep, BlockedStep, Competence
 from pymc3.util import get_untransformed_name

@@ -5,12 +5,29 @@ try:
 except ImportError:
     import aesara
 
-import aesara.tensor as at
+try:
+    import theano.tensor as at
+except ImportError:
+    import aesara.tensor as at
+
 import numpy as np
 import pymc3 as pm
-from aesara.graph.op import get_test_value
-from aesara.graph.utils import TestValueError
-from aesara.scalar import upcast
+
+try:
+    from theano.graph.op import get_test_value
+except ImportError:
+    from aesara.graph.op import get_test_value
+
+try:
+    from theano.graph.utils import TestValueError
+except ImportError:
+    from aesara.graph.utils import TestValueError
+
+try:
+    from theano.scalar import upcast
+except ImportError:
+    from aesara.scalar import upcast
+
 from pymc3.distributions.distribution import _DrawValuesContext, draw_values
 from pymc3.distributions.mixture import _conversion_map, all_discrete
 
