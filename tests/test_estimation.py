@@ -1,13 +1,25 @@
 from datetime import date, timedelta
 
+try:
+    import theano as aesara
+except ImportError:
+    import aesara
+
+try:
+    import theano.tensor as at
+except ImportError:
+    import aesara.tensor as at
+
 import arviz as az
 import numpy as np
 import pandas as pd
 import patsy
 import pymc3 as pm
-import theano
-import theano.tensor as tt
-from theano import shared
+
+try:
+    from theano import shared
+except ImportError:
+    from aesara import shared
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.step_methods import FFBSStep
@@ -29,7 +41,7 @@ def gen_toy_data(days=-7 * 10):
 
 def create_dirac_zero_hmm(X, mu, xis, observed):
     S = 2
-    z_tt = tt.stack([tt.dot(X, xis[..., s, :]) for s in range(S)], axis=1)
+    z_tt = at.stack([at.dot(X, xis[..., s, :]) for s in range(S)], axis=1)
     Gammas_tt = pm.Deterministic("Gamma", multilogit_inv(z_tt))
     gamma_0_rv = pm.Dirichlet("gamma_0", np.ones((S,)))
 
@@ -62,8 +74,8 @@ def test_only_positive_state():
         p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
         p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
 
-        P_tt = tt.stack([p_0_rv, p_1_rv])
-        Gammas_tt = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
+        P_tt = at.stack([p_0_rv, p_1_rv])
+        Gammas_tt = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
 
         gamma_0_rv = pm.Dirichlet("gamma_0", np.ones((S,)))
 
@@ -168,7 +180,7 @@ def test_time_varying_model():
 
     trace = posterior_trace.posterior.drop_vars(["Gamma", "V_t"])
 
-    with theano.config.change_flags(compute_test_value="off"):
+    with aesara.config.change_flags(compute_test_value="off"):
         adds_pois_ppc = pm.sample_posterior_predictive(
             trace, var_names=["V_t", "Y_t", "Gamma"], model=model
         )

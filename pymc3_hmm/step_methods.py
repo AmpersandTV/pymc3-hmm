@@ -1,21 +1,66 @@
 from itertools import chain
 
+try:
+    import theano.scalar as ts
+except ImportError:
+    import aesara.scalar as ts
+
+try:
+    import theano.tensor as at
+except ImportError:
+    import aesara.tensor as at
+
 import numpy as np
 import pymc3 as pm
-import theano.scalar as ts
-import theano.tensor as tt
+
+try:
+    from theano.compile import optdb
+except ImportError:
+    from aesara.compile import optdb
+
+try:
+    from theano.graph.basic import Variable, graph_inputs
+except ImportError:
+    from aesara.graph.basic import Variable, graph_inputs
+
+try:
+    from theano.graph.fg import FunctionGraph
+except ImportError:
+    from aesara.graph.fg import FunctionGraph
+
+try:
+    from theano.graph.op import get_test_value as test_value
+except ImportError:
+    from aesara.graph.op import get_test_value as test_value
+
+try:
+    from theano.graph.opt import OpRemove, pre_greedy_local_optimizer
+except ImportError:
+    from aesara.graph.opt import OpRemove, pre_greedy_local_optimizer
+
+try:
+    from theano.graph.optdb import Query
+except ImportError:
+    from aesara.graph.optdb import Query
+
+try:
+    from theano.tensor.elemwise import DimShuffle, Elemwise
+except ImportError:
+    from aesara.tensor.elemwise import DimShuffle, Elemwise
+
+try:
+    from theano.tensor.subtensor import AdvancedIncSubtensor1
+except ImportError:
+    from aesara.tensor.subtensor import AdvancedIncSubtensor1
+
+try:
+    from theano.tensor.var import TensorConstant
+except ImportError:
+    from aesara.tensor.var import TensorConstant
+
 from pymc3.distributions.distribution import draw_values
 from pymc3.step_methods.arraystep import ArrayStep, BlockedStep, Competence
 from pymc3.util import get_untransformed_name
-from theano.compile import optdb
-from theano.graph.basic import Variable, graph_inputs
-from theano.graph.fg import FunctionGraph
-from theano.graph.op import get_test_value as test_value
-from theano.graph.opt import OpRemove, pre_greedy_local_optimizer
-from theano.graph.optdb import Query
-from theano.tensor.elemwise import DimShuffle, Elemwise
-from theano.tensor.subtensor import AdvancedIncSubtensor1
-from theano.tensor.var import TensorConstant
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.utils import compute_trans_freqs
@@ -159,7 +204,7 @@ class FFBSStep(BlockedStep):
                 for comp_dist in dependent_rv.distribution.comp_dists:
                     comp_logps.append(comp_dist.logp(dependent_rv))
 
-                comp_logp_stacked = tt.stack(comp_logps)
+                comp_logp_stacked = at.stack(comp_logps)
             else:
                 raise TypeError(
                     "This sampler only supports `SwitchingProcess` observations"
@@ -167,7 +212,7 @@ class FFBSStep(BlockedStep):
 
             dep_comps_logp_stacked.append(comp_logp_stacked)
 
-        comp_logp_stacked = tt.sum(dep_comps_logp_stacked, axis=0)
+        comp_logp_stacked = at.sum(dep_comps_logp_stacked, axis=0)
 
         (M,) = draw_values([var.distribution.gamma_0.shape[-1]], point=model.test_point)
         N = model.test_point[var.name].shape[-1]
@@ -352,7 +397,7 @@ class TransMatConjugateStep(ArrayStep):
 
         Gamma_Join = Gamma_DimShuffle.inputs[0].owner
 
-        if not (isinstance(Gamma_Join.op, tt.basic.Join)):
+        if not (isinstance(Gamma_Join.op, at.basic.Join)):
             raise TypeError(
                 "The transition matrix should be comprised of stacked row vectors"
             )
