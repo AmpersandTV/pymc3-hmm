@@ -31,7 +31,7 @@ def create_dirac_zero_hmm(X, mu, xis, observed):
     S = 2
     z_tt = tt.stack([tt.dot(X, xis[..., s, :]) for s in range(S)], axis=1)
     Gammas_tt = pm.Deterministic("Gamma", multilogit_inv(z_tt))
-    gamma_0_rv = pm.Dirichlet("gamma_0", np.ones((S,)))
+    gamma_0_rv = pm.Dirichlet("gamma_0", np.ones((S,)), shape=S)
 
     if type(observed) == np.ndarray:
         T = X.shape[0]
@@ -59,13 +59,13 @@ def test_only_positive_state():
     y_t = np.repeat(0, 100)
 
     with pm.Model():
-        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
-        p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
+        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
+        p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
         P_tt = tt.stack([p_0_rv, p_1_rv])
         Gammas_tt = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
 
-        gamma_0_rv = pm.Dirichlet("gamma_0", np.ones((S,)))
+        gamma_0_rv = pm.Dirichlet("gamma_0", np.ones((S,)), shape=S)
 
         V_rv = DiscreteMarkovChain("V_t", Gammas_tt, gamma_0_rv, shape=y_t.shape[0])
         V_rv.tag.test_value = (y_t > 0) * 1
