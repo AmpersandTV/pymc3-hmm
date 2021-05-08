@@ -10,13 +10,13 @@ def simulate_poiszero_hmm(
 ):
 
     with pm.Model() as test_model:
-        p_0_rv = pm.Dirichlet("p_0", p_0_a)
-        p_1_rv = pm.Dirichlet("p_1", p_1_a)
+        p_0_rv = pm.Dirichlet("p_0", p_0_a, shape=np.shape(pi_0_a))
+        p_1_rv = pm.Dirichlet("p_1", p_1_a, shape=np.shape(pi_0_a))
 
         P_tt = tt.stack([p_0_rv, p_1_rv])
         P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
 
-        pi_0_tt = pm.Dirichlet("pi_0", pi_0_a)
+        pi_0_tt = pm.Dirichlet("pi_0", pi_0_a, shape=np.shape(pi_0_a))
 
         S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=N)
 

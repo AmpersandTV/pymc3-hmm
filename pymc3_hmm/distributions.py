@@ -9,13 +9,9 @@ from pymc3.distributions.mixture import _conversion_map, all_discrete
 from theano.graph.op import get_test_value
 from theano.graph.utils import TestValueError
 from theano.scalar import upcast
+from theano.tensor.extra_ops import broadcast_to as tt_broadcast_to
 
-from pymc3_hmm.utils import (
-    broadcast_to,
-    tt_broadcast_arrays,
-    tt_expand_dims,
-    vsearchsorted,
-)
+from pymc3_hmm.utils import tt_broadcast_arrays, tt_expand_dims, vsearchsorted
 
 
 def distribution_subset_args(dist, shape, idx, point=None):
@@ -77,15 +73,9 @@ def distribution_subset_args(dist, shape, idx, point=None):
         else:
             x = point[param]
 
-            # Try to get a concrete/NumPy value if a `point` parameter was
-            # given.
-            try:
-                x = get_test_value(x)
-                shape = get_test_value(shape)
-            except TestValueError:  # pragma: no cover
-                pass
+        bcast_res = tt_broadcast_to(x, shape)
 
-        res.append(broadcast_to(x, shape)[idx])
+        res.append(bcast_res[idx])
 
     return res
 
@@ -155,9 +145,9 @@ class SwitchingProcess(pm.Distribution):
         if not all_discrete(comp_dists):
             try:
                 bcast_means = tt_broadcast_arrays(
-                    *([self.states] + [d.mean for d in self.comp_dists])
+                    *([self.states] + [d.mean.astype(dtype) for d in self.comp_dists])
                 )
-                self.mean = tt.choose(self.states, bcast_means)
+                self.mean = tt.choose(self.states, bcast_means[1:])
 
                 if "mean" not in defaults:
                     defaults.append("mean")
@@ -167,9 +157,9 @@ class SwitchingProcess(pm.Distribution):
 
         try:
             bcast_modes = tt_broadcast_arrays(
-                *([self.states] + [d.mode for d in self.comp_dists])
+                *([self.states] + [d.mode.astype(dtype) for d in self.comp_dists])
             )
-            self.mode = tt.choose(self.states, bcast_modes)
+            self.mode = tt.choose(self.states, bcast_modes[1:])
 
             if "mode" not in defaults:
                 defaults.append("mode")

@@ -124,8 +124,8 @@ def test_FFBSStep():
     y_test = poiszero_sim["Y_t"]
 
     with pm.Model() as test_model:
-        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
-        p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
+        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
+        p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
         P_tt = tt.stack([p_0_rv, p_1_rv])
         P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
@@ -213,7 +213,7 @@ def test_FFBSStep_extreme():
 def test_TransMatConjugateStep():
 
     with pm.Model() as test_model, pytest.raises(ValueError):
-        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         transmat = TransMatConjugateStep(p_0_rv)
 
     np.random.seed(2032)
@@ -222,8 +222,8 @@ def test_TransMatConjugateStep():
     y_test = poiszero_sim["Y_t"]
 
     with pm.Model() as test_model:
-        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
-        p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
+        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
+        p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
         P_tt = tt.stack([p_0_rv, p_1_rv])
         P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
@@ -265,8 +265,8 @@ def test_TransMatConjugateStep_subtensors():
     # Confirm that Dirichlet/non-Dirichlet mixed rows can be
     # parsed
     with pm.Model():
-        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
-        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
+        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
+        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
         p_0_rv = tt.as_tensor([0, 0, 1])
         p_1_rv = tt.zeros(3)
@@ -289,8 +289,8 @@ def test_TransMatConjugateStep_subtensors():
 
     # Same thing, just with some manipulations of the transition matrix
     with pm.Model():
-        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
-        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
+        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
+        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
         p_0_rv = tt.as_tensor([0, 0, 1])
         p_1_rv = tt.zeros(3)
@@ -315,8 +315,8 @@ def test_TransMatConjugateStep_subtensors():
 
     # Use an observed `DiscreteMarkovChain` and check the conjugate results
     with pm.Model():
-        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
-        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
+        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
+        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
         p_0_rv = tt.as_tensor([0, 0, 1])
         p_1_rv = tt.zeros(3)

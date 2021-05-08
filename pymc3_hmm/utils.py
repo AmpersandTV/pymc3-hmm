@@ -8,6 +8,8 @@ from matplotlib import cm
 from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
 from scipy.special import logsumexp
+from theano.tensor.extra_ops import broadcast_shape
+from theano.tensor.extra_ops import broadcast_to as tt_broadcast_to
 from theano.tensor.var import TensorVariable
 
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[int], signature="(n),()->()")
@@ -170,49 +172,14 @@ def tt_expand_dims(x, dims):
 def tt_broadcast_arrays(*args: TensorVariable):
     """Broadcast any number of arrays against each other.
 
-    This is a Theano emulation of `numpy.broadcast_arrays`.  It does *not* use
-    memory views, and--as a result--it will not be nearly as efficient as the
-    NumPy version.
-
     Parameters
     ----------
     `*args` : array_likes
         The arrays to broadcast.
 
     """
-    p = max(a.ndim for a in args)
-
-    args = tuple(
-        tt.shape_padleft(a, n_ones=p - a.ndim) if a.ndim < p else a for a in args
-    )
-
-    bcast_shape = [None] * p
-    for i in range(p - 1, -1, -1):
-        non_bcast_args = [tuple(a.shape)[i] for a in args if not a.broadcastable[i]]
-        bcast_shape[i] = tt.max([1] + non_bcast_args)
-
-    # TODO: This could be very costly?
-    return [a * tt.ones(bcast_shape) for a in args]
-
-
-def broadcast_to(x, shape):
-    """Broadcast an array to a new shape.
-
-    This implementation will use NumPy when an `ndarray` is given and an
-    inefficient Theano variant otherwise.
-
-    Parameters
-    ----------
-    x : array_like
-        The array to broadcast.
-    shape : tuple
-        The shape of the desired array.
-    """
-    if isinstance(x, np.ndarray):
-        return np.broadcast_to(x, shape)  # pragma: no cover
-    else:
-        # TODO: This could be very costly?
-        return x * tt.ones(shape)
+    bcast_shape = broadcast_shape(*args)
+    return tuple(tt_broadcast_to(a, bcast_shape) for a in args)
 
 
 def multilogit_inv(ys):
