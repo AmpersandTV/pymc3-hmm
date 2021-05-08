@@ -185,7 +185,7 @@ def test_DiscreteMarkovChain_point():
     with pm.Model():
         # XXX: `draw_values` won't use the `Deterministic`s values in the `point` map!
         # Also, `Constant` is only for integer types (?!), so we can't use that.
-        test_gamma_0 = pm.Dirichlet("gamma_0", np.r_[1.0, 1000.0])
+        test_gamma_0 = pm.Dirichlet("gamma_0", np.r_[1.0, 1000.0], shape=2)
         test_point = {"gamma_0": np.r_[1.0, 0.0]}
         assert np.all(
             DiscreteMarkovChain.dist(test_Gammas, test_gamma_0, shape=10).random(
