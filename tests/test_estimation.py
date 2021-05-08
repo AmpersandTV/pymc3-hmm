@@ -127,7 +127,7 @@ def test_time_varying_model():
         xis_rv = pm.Normal("xis", 0, 10, shape=xis_rv_true.shape)
         _ = create_dirac_zero_hmm(X, 1000, xis_rv, Y)
 
-    number_of_draws = 400
+    number_of_draws = 1000
 
     with model:
         steps = [
@@ -149,7 +149,7 @@ def test_time_varying_model():
             return_inferencedata=True,
             chains=1,
             cores=1,
-            tune=number_of_draws // 2,
+            tune=number_of_draws,
             progressbar=True,
             idata_kwargs={"dims": {"Y_t": ["date"], "V_t": ["date"]}},
         )
@@ -163,8 +163,8 @@ def test_time_varying_model():
     hdi_data = az.hdi(posterior_trace, hdi_prob=0.95, var_names=["xis"]).to_dataframe()
     hdi_data = hdi_data.unstack(level="hdi")
 
-    assert np.all(xis_rv_true.squeeze().flatten() <= hdi_data["xis", "higher"])
-    assert np.all(xis_rv_true.squeeze().flatten() >= hdi_data["xis", "lower"])
+    assert np.all(xis_rv_true.squeeze().flatten() <= hdi_data["xis", "higher"].values)
+    assert np.all(xis_rv_true.squeeze().flatten() >= hdi_data["xis", "lower"].values)
 
     trace = posterior_trace.posterior.drop_vars(["Gamma", "V_t"])
 
