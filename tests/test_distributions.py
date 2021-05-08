@@ -547,7 +547,7 @@ def test_subset_args():
     test_point = {"c": np.r_[2.0, 3.0, 4.0]}
     test_idx = np.r_[0, 2]
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx, point=test_point)
-    assert np.array_equal(res[0], np.r_[2.0, 4.0])
+    assert np.array_equal(res[0].eval(), np.r_[2.0, 4.0])
 
     test_dist = pm.Normal.dist(mu=np.r_[0.1, 1.2, 2.3], sigma=np.r_[10.0])
     test_idx = np.r_[0, 2]
@@ -558,8 +558,8 @@ def test_subset_args():
     test_point = {"mu": np.r_[2.0, 3.0, 4.0], "sigma": np.r_[20.0, 30.0, 40.0]}
     test_idx = np.r_[0, 2]
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx, point=test_point)
-    assert np.array_equal(res[0], np.r_[2.0, 4.0])
-    assert np.array_equal(res[1], np.r_[20.0, 40.0])
+    assert np.array_equal(res[0].eval(), np.r_[2.0, 4.0])
+    assert np.array_equal(res[1].eval(), np.r_[20.0, 40.0])
 
     test_dist = pm.Poisson.dist(mu=np.r_[0.1, 1.2, 2.3])
     test_idx = np.r_[0, 2]
@@ -569,7 +569,7 @@ def test_subset_args():
     test_point = {"mu": np.r_[2.0, 3.0, 4.0]}
     test_idx = np.r_[0, 2]
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx, point=test_point)
-    assert np.array_equal(res[0], np.r_[2.0, 4.0])
+    assert np.array_equal(res[0].eval(), np.r_[2.0, 4.0])
 
     test_dist = pm.NegativeBinomial.dist(mu=np.r_[0.1, 1.2, 2.3], alpha=2)
     test_idx = np.r_[0, 2]
@@ -580,5 +580,5 @@ def test_subset_args():
     test_point = {"mu": np.r_[2.0, 3.0, 4.0], "alpha": np.r_[10, 11, 12]}
     test_idx = np.r_[0, 2]
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx, point=test_point)
-    assert np.array_equal(res[0], np.r_[2.0, 4.0])
-    assert np.array_equal(res[1], np.r_[10, 12])
+    assert np.array_equal(res[0].eval(), np.r_[2.0, 4.0])
+    assert np.array_equal(res[1].eval(), np.r_[10, 12])
