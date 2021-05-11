@@ -307,7 +307,7 @@ class DiscreteMarkovChain(pm.Discrete):
         shape = np.atleast_1d(shape)
 
         dtype = _conversion_map[theano.config.floatX]
-        self.mode = tt.zeros(tuple(shape), dtype=dtype)
+        self.mode = np.zeros(tuple(shape), dtype=dtype)
 
         super().__init__(shape=shape, **kwargs)
 
