@@ -20,10 +20,14 @@ from theano.tensor.var import TensorConstant
 from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.utils import compute_trans_freqs
 
+import numba as nb
+import contextlib
+
 big: float = 1e20
 small: float = 1.0 / big
 
-
+##@profile
+@nb.njit
 def ffbs_step(
     gamma_0: np.ndarray,
     Gammas: np.ndarray,
@@ -66,21 +70,40 @@ def ffbs_step(
 
     # Previous forward probability
     alpha_nm1: np.ndarray = gamma_0_normed
+    #print(alpha_nm1)
+
 
     # Make sure we have a transition matrix for each element in a state
     # sequence
-    Gamma: np.ndarray = np.broadcast_to(Gammas, (N,) + Gammas.shape[-2:])
+    s=((N,) + Gammas.shape[-2:])
+    Gamma: np.ndarray =Gammas*np.ones(s)
 
-    lik_n: np.ndarray = np.empty((M,), dtype=float)
-    alpha_n: np.ndarray = np.empty((M,), dtype=float)
+    ##with numba.objectmode(Gamma=numba.types.float64[:,:,:]):
+    ##Gamma: np.ndarray = np.broadcast_to(Gammas, (N,) + Gammas.shape[-2:])
+
+    lik_n: np.ndarray = np.empty((M,), dtype=np.float64)
+    alpha_n: np.ndarray = np.empty((M,), dtype=np.float64)
+    alpha_test: np.ndarray = np.zeros((M,),dtype=np.float64)
+
+    #gamma_0_normed.tofile('/home/ec2-user/profiling/test_data/gamma_0_normed',sep="|",format="%s")
+    #alpha_test.tofile('/home/ec2-user/profiling/test_data/alpha_test',sep="|",format="%s")
 
     # Forward filtering
     for n in range(N):
         log_lik_n: np.ndarray = log_lik[..., n]
-        np.exp(log_lik_n - log_lik_n.max(), out=lik_n)
-        np.dot(alpha_nm1, Gamma[n], out=alpha_n)
+        np.exp(log_lik_n - log_lik_n.max(), lik_n)
+        print("log_lik_n ", log_lik_n)
+        print(lik_n)
+        #n_alpha=alpha_nm1.shape[0]
+        #m_gamma=Gamma[n].shape[1]
+        #K_gamma=Gamma[n].shape[0]
+        #for i_alpha in range(0,n_alpha):
+        #    for k_gamma in range(0,K_gamma):
+        #        alpha_n[i_alpha] += alpha_nm1[i_alpha]*Gamma[n,k_gamma,i_alpha]
+        np.dot(alpha_nm1, Gamma[n], alpha_n)
+        print(alpha_n)
         alpha_n *= lik_n
-        alpha_n_sum: float = np.sum(alpha_n)
+        alpha_n_sum: np.float64 = np.sum(alpha_n)
 
         # Rescale small values
         if alpha_n_sum < small:
@@ -90,27 +113,34 @@ def ffbs_step(
         alphas[..., n] = alpha_n
 
     # The uniform samples used to sample the categorical states
-    unif_samples: np.ndarray = np.random.uniform(size=out.shape)
+    a=np.int64(0)
+    b=np.int64(1)
+    unif_samples: np.ndarray = np.random.uniform(a,b,size=(out.shape[0]))
 
     alpha_N: np.ndarray = alphas[..., N - 1]
     beta_N: np.ndarray = alpha_N / alpha_N.sum()
+    
+    print(alphas)
+    print(beta_N.cumsum())
+    print(unif_samples[N-1])
 
-    state_np1: np.ndarray = np.searchsorted(beta_N.cumsum(), unif_samples[N - 1])
+    state_np1: np.int64 = np.searchsorted(beta_N.cumsum(), unif_samples[N - 1]).item()
+
+    print(state_np1)
 
     out[N - 1] = state_np1
 
-    beta_n: np.ndarray = np.empty((M,), dtype=float)
+    beta_n: np.ndarray = np.empty((M,), dtype=np.float64)
 
     # Backward sampling
     for n in range(N - 2, -1, -1):
-        np.multiply(alphas[..., n], Gamma[n, :, state_np1], out=beta_n)
+        np.multiply(alphas[..., n], Gamma[n, :, state_np1], beta_n)
         beta_n /= np.sum(beta_n)
 
-        state_np1 = np.searchsorted(beta_n.cumsum(), unif_samples[n])
+        state_np1 = np.searchsorted(beta_n.cumsum(), unif_samples[n]).item()
         out[n] = state_np1
 
     return out
-
 
 class FFBSStep(BlockedStep):
     r"""Forward-filtering backward-sampling steps.
@@ -129,6 +159,7 @@ class FFBSStep(BlockedStep):
 
     name = "ffbs"
 
+    ##@profile
     def __init__(self, vars, values=None, model=None):
 
         if len(vars) > 1:
@@ -177,6 +208,7 @@ class FFBSStep(BlockedStep):
         self.gamma_0_fn = model.fn(var.distribution.gamma_0)
         self.Gammas_fn = model.fn(var.distribution.Gammas)
 
+    ##@profile
     def step(self, point):
         gamma_0 = self.gamma_0_fn(point)
         # TODO: Can we update these in-place (e.g. using a shared variable)?
@@ -234,6 +266,7 @@ class TransMatConjugateStep(ArrayStep):
 
     name = "trans-mat-conjugate"
 
+    ##@profile
     def __init__(self, model_vars, values=None, model=None, rng=None):
         """Initialize a `TransMatConjugateStep` object."""
 
@@ -287,6 +320,7 @@ class TransMatConjugateStep(ArrayStep):
 
         super().__init__(dir_priors, [], allvars=True)
 
+    ##@profile
     def _set_row_mappings(self, Gamma, dir_priors, model):
         """Create maps from Dirichlet priors parameters to rows and slices in the transition matrix.
 
@@ -403,7 +437,7 @@ class TransMatConjugateStep(ArrayStep):
                         " Dirichlet/non-Dirichlet rows"
                     )
                 self.row_slices[j] = rhand_val.data
-
+    ##@profile
     def astep(self, point, inputs):
 
         states = getattr(self, "state_seq_obs", None)
