@@ -1,17 +1,11 @@
 import warnings
 
+import aesara.tensor as at
 import numpy as np
-
-try:
-    import aesara.tensor as at
-    from aesara.graph.op import get_test_value
-except ImportError:
-    import theano.tensor as at
-    from theano.graph.op import get_test_value
-
 import pymc3 as pm
 import pytest
 import scipy as sp
+from aesara.graph.op import get_test_value
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, PoissonZeroProcess
 from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep, ffbs_step

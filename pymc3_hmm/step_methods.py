@@ -1,34 +1,18 @@
 from itertools import chain
 
+import aesara.scalar as aes
+import aesara.tensor as at
 import numpy as np
-
-try:  # pragma: no cover
-    import aesara.scalar as aes
-    import aesara.tensor as at
-    from aesara.compile import optdb
-    from aesara.graph.basic import Variable, graph_inputs
-    from aesara.graph.fg import FunctionGraph
-    from aesara.graph.op import get_test_value as test_value
-    from aesara.graph.opt import OpRemove, pre_greedy_local_optimizer
-    from aesara.graph.optdb import Query
-    from aesara.tensor.elemwise import DimShuffle, Elemwise
-    from aesara.tensor.subtensor import AdvancedIncSubtensor1
-    from aesara.tensor.var import TensorConstant
-except ImportError:  # pragma: no cover
-    import theano.scalar as aes
-    import theano.tensor as at
-    from theano.compile import optdb
-    from theano.graph.basic import Variable, graph_inputs
-    from theano.graph.fg import FunctionGraph
-    from theano.graph.op import get_test_value as test_value
-    from theano.graph.opt import OpRemove, pre_greedy_local_optimizer
-    from theano.graph.optdb import Query
-    from theano.tensor.elemwise import DimShuffle, Elemwise
-    from theano.tensor.subtensor import AdvancedIncSubtensor1
-    from theano.tensor.var import TensorConstant
-
 import pymc3 as pm
-from pymc3.distributions.distribution import draw_values
+from aesara.compile import optdb
+from aesara.graph.basic import Variable, graph_inputs
+from aesara.graph.fg import FunctionGraph
+from aesara.graph.op import get_test_value as test_value
+from aesara.graph.opt import OpRemove, pre_greedy_local_optimizer
+from aesara.graph.optdb import Query
+from aesara.tensor.elemwise import DimShuffle, Elemwise
+from aesara.tensor.subtensor import AdvancedIncSubtensor1
+from aesara.tensor.var import TensorConstant
 from pymc3.step_methods.arraystep import ArrayStep, BlockedStep, Competence
 from pymc3.util import get_untransformed_name
 
@@ -184,7 +168,8 @@ class FFBSStep(BlockedStep):
 
         comp_logp_stacked = at.sum(dep_comps_logp_stacked, axis=0)
 
-        (M,) = draw_values([var.distribution.gamma_0.shape[-1]], point=model.test_point)
+        # XXX: This isn't correct.
+        M = var.owner.inputs[2].eval(model.test_point)
         N = model.test_point[var.name].shape[-1]
         self.alphas = np.empty((M, N), dtype=float)
 

@@ -17,7 +17,8 @@ setup(
     install_requires=[
         "numpy>=1.18.1",
         "scipy>=1.4.0",
-        "pymc3>=3.11.1,<4.0.0",
+        "pymc3>=4.0.0",
+        "aesara>=2.0.10",
     ],
     tests_require=["pytest"],
     long_description=open("README.md").read() if exists("README.md") else "",

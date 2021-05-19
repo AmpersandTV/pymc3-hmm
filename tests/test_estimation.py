@@ -1,24 +1,13 @@
 from datetime import date, timedelta
 
+import aesara
+import aesara.tensor as at
 import arviz as az
 import numpy as np
 import pandas as pd
 import patsy
-
-try:
-    import aesara
-    import aesara.tensor as at
-    from aesara import shared
-
-    TV_CONFIG = {"aesara_config": {"compute_test_value": "ignore"}}
-except ImportError:
-    import theano as aesara
-    import theano.tensor as at
-    from theano import shared
-
-    TV_CONFIG = {"theano_config": {"compute_test_value": "ignore"}}
-
 import pymc3 as pm
+from aesara import shared
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.step_methods import FFBSStep
@@ -118,7 +107,7 @@ def test_time_varying_model():
 
     xis_rv_true = np.stack([xi_0_true, xi_1_true], axis=1)
 
-    with pm.Model(**TV_CONFIG) as sim_model:
+    with pm.Model() as sim_model:
         _ = create_dirac_zero_hmm(
             X_np, mu=1000, xis=xis_rv_true, observed=np.zeros(X_np.shape[0])
         )

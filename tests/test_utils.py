@@ -1,13 +1,8 @@
+import aesara
+import aesara.tensor as at
 import numpy as np
 import pytest
 import scipy as sp
-
-try:
-    import aesara
-    import aesara.tensor as at
-except ImportError:
-    import theano as aesara
-    import theano.tensor as at
 
 from pymc3_hmm.utils import (
     compute_trans_freqs,

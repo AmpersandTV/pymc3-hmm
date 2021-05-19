@@ -1,5 +1,6 @@
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+import aesara.tensor as at
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -7,18 +8,6 @@ from matplotlib import cm
 from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
 from scipy.special import logsumexp
-
-try:  # pragma: no cover
-    import aesara.tensor as at
-    from aesara.tensor.extra_ops import broadcast_shape
-    from aesara.tensor.extra_ops import broadcast_to as at_broadcast_to
-    from aesara.tensor.var import TensorVariable
-except ImportError:  # pragma: no cover
-    import theano.tensor as at
-    from theano.tensor.extra_ops import broadcast_shape
-    from theano.tensor.extra_ops import broadcast_to as at_broadcast_to
-    from theano.tensor.var import TensorVariable
-
 
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[int], signature="(n),()->()")
 
@@ -175,19 +164,6 @@ def tt_expand_dims(x, dims):
         dim_range.insert(d + offset, "x")
 
     return x.dimshuffle(dim_range)
-
-
-def tt_broadcast_arrays(*args: TensorVariable):
-    """Broadcast any number of arrays against each other.
-
-    Parameters
-    ----------
-    `*args` : array_likes
-        The arrays to broadcast.
-
-    """
-    bcast_shape = broadcast_shape(*args)
-    return tuple(at_broadcast_to(a, bcast_shape) for a in args)
 
 
 def multilogit_inv(ys):
