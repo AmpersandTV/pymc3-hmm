@@ -23,8 +23,8 @@ from pymc3_hmm.utils import compute_trans_freqs
 import numba as nb
 import contextlib
 
-big: float = 1e20
-small: float = 1.0 / big
+big: np.float64 = 1e20
+small: np.float64 = 1.0 / big
 
 ##@profile
 @nb.njit
@@ -59,87 +59,60 @@ def ffbs_step(
     """
     # Number of observations
     N: int = log_lik.shape[-1]
-
     # Number of states
     M: int = gamma_0.shape[-1]
     # assert M == log_lik.shape[-2]
-
     # Initial state probabilities
     gamma_0_normed: np.ndarray = gamma_0.copy()
     gamma_0_normed /= np.sum(gamma_0)
-
     # Previous forward probability
     alpha_nm1: np.ndarray = gamma_0_normed
     #print(alpha_nm1)
-
-
     # Make sure we have a transition matrix for each element in a state
     # sequence
     s=((N,) + Gammas.shape[-2:])
     Gamma: np.ndarray =Gammas*np.ones(s)
-
-    ##with numba.objectmode(Gamma=numba.types.float64[:,:,:]):
-    ##Gamma: np.ndarray = np.broadcast_to(Gammas, (N,) + Gammas.shape[-2:])
-
+    #print("Gamma",Gamma)
     lik_n: np.ndarray = np.empty((M,), dtype=np.float64)
     alpha_n: np.ndarray = np.empty((M,), dtype=np.float64)
     alpha_test: np.ndarray = np.zeros((M,),dtype=np.float64)
-
     #gamma_0_normed.tofile('/home/ec2-user/profiling/test_data/gamma_0_normed',sep="|",format="%s")
     #alpha_test.tofile('/home/ec2-user/profiling/test_data/alpha_test',sep="|",format="%s")
-
     # Forward filtering
+    #for n in range(N):
     for n in range(N):
         log_lik_n: np.ndarray = log_lik[..., n]
         np.exp(log_lik_n - log_lik_n.max(), lik_n)
-        print("log_lik_n ", log_lik_n)
-        print(lik_n)
-        #n_alpha=alpha_nm1.shape[0]
-        #m_gamma=Gamma[n].shape[1]
-        #K_gamma=Gamma[n].shape[0]
-        #for i_alpha in range(0,n_alpha):
-        #    for k_gamma in range(0,K_gamma):
-        #        alpha_n[i_alpha] += alpha_nm1[i_alpha]*Gamma[n,k_gamma,i_alpha]
-        np.dot(alpha_nm1, Gamma[n], alpha_n)
-        print(alpha_n)
+        n_alpha=alpha_nm1.shape[0]
+        m_gamma=Gamma[n].shape[1]
+        K_gamma=Gamma[n].shape[0]
+        #for i_alpha in range(n_alpha):
+        #    for m_gamma in range(K_gamma):
+        #        alpha_n[i_alpha] += alpha_nm1[i_alpha]*Gamma[n,m_gamma,i_alpha]
+        #np.dot(alpha_nm1, Gamma[n], alpha_n)
+        alpha_n=np.dot(alpha_nm1, Gamma[n])
         alpha_n *= lik_n
         alpha_n_sum: np.float64 = np.sum(alpha_n)
-
         # Rescale small values
         if alpha_n_sum < small:
             alpha_n *= big
-
         alpha_nm1 = alpha_n
         alphas[..., n] = alpha_n
-
     # The uniform samples used to sample the categorical states
     a=np.int64(0)
     b=np.int64(1)
     unif_samples: np.ndarray = np.random.uniform(a,b,size=(out.shape[0]))
-
     alpha_N: np.ndarray = alphas[..., N - 1]
     beta_N: np.ndarray = alpha_N / alpha_N.sum()
-    
-    print(alphas)
-    print(beta_N.cumsum())
-    print(unif_samples[N-1])
-
-    state_np1: np.int64 = np.searchsorted(beta_N.cumsum(), unif_samples[N - 1]).item()
-
-    print(state_np1)
-
+    state_np1: np.ndarray = np.searchsorted(beta_N.cumsum(), unif_samples[N - 1])
     out[N - 1] = state_np1
-
     beta_n: np.ndarray = np.empty((M,), dtype=np.float64)
-
     # Backward sampling
     for n in range(N - 2, -1, -1):
-        np.multiply(alphas[..., n], Gamma[n, :, state_np1], beta_n)
+        beta_n=np.multiply(alphas[..., n], Gamma[n, :, state_np1])
         beta_n /= np.sum(beta_n)
-
         state_np1 = np.searchsorted(beta_n.cumsum(), unif_samples[n]).item()
         out[n] = state_np1
-
     return out
 
 class FFBSStep(BlockedStep):
