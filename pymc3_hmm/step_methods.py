@@ -1,26 +1,57 @@
-from itertools import chain
+from typing import List
 
 import aesara.scalar as aes
 import aesara.tensor as at
 import numpy as np
 import pymc3 as pm
 from aesara.compile import optdb
-from aesara.graph.basic import Variable, graph_inputs
+from aesara.graph.basic import Variable, graph_inputs, vars_between, walk
 from aesara.graph.fg import FunctionGraph
 from aesara.graph.op import get_test_value as test_value
 from aesara.graph.opt import OpRemove, pre_greedy_local_optimizer
 from aesara.graph.optdb import Query
 from aesara.tensor.elemwise import DimShuffle, Elemwise
+from aesara.tensor.random.op import RandomVariable
+from aesara.tensor.random.type import RandomStateType
 from aesara.tensor.subtensor import AdvancedIncSubtensor1
 from aesara.tensor.var import TensorConstant
+from pymc3.aesaraf import change_rv_size
+from pymc3.distributions.logprob import logpt
 from pymc3.step_methods.arraystep import ArrayStep, BlockedStep, Competence
 from pymc3.util import get_untransformed_name
 
-from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
+from pymc3_hmm.distributions import DiscreteMarkovChainFactory, SwitchingProcessFactory
 from pymc3_hmm.utils import compute_trans_freqs
 
 big: float = 1e20
 small: float = 1.0 / big
+
+
+def walk_no_states(graphs, expand_fn=lambda x: x.owner.outputs):
+    def expand(var):
+        new_vars: List[Variable] = []
+
+        if var.owner and not isinstance(var.type, RandomStateType):
+            new_vars.extend(reversed(var.owner.inputs))
+
+        return new_vars
+
+    yield from walk(graphs, expand, False)
+
+
+def conform_rv_shape(rv_var, shape):
+    ndim_supp = rv_var.owner.op.ndim_supp
+    if ndim_supp > 0:
+        new_size = shape[:-ndim_supp]
+    else:
+        new_size = shape
+
+    rv_var = change_rv_size(rv_var, new_size)
+
+    if hasattr(rv_var.tag, "value_var"):
+        rv_var.tag.value_var = rv_var.type()
+
+    return rv_var
 
 
 def ffbs_step(
@@ -29,6 +60,7 @@ def ffbs_step(
     log_lik: np.ndarray,
     alphas: np.ndarray,
     out: np.ndarray,
+    rng: np.random.RandomState,
 ):
     """Sample a forward-filtered backward-sampled (FFBS) state sequence.
 
@@ -50,6 +82,8 @@ def ffbs_step(
     out
         An output array to be updated in-place with the posterior sample
         states.
+    rng
+        A ``RandomState`` object used to sample the states.
 
     """
     # Number of observations
@@ -89,7 +123,7 @@ def ffbs_step(
         alphas[..., n] = alpha_n
 
     # The uniform samples used to sample the categorical states
-    unif_samples: np.ndarray = np.random.uniform(size=out.shape)
+    unif_samples: np.ndarray = rng.uniform(size=out.shape)
 
     alpha_N: np.ndarray = alphas[..., N - 1]
     beta_N: np.ndarray = alpha_N / alpha_N.sum()
@@ -128,35 +162,57 @@ class FFBSStep(BlockedStep):
 
     name = "ffbs"
 
-    def __init__(self, vars, values=None, model=None):
+    def __init__(self, vars, values=None, model=None, rng=None):
 
         if len(vars) > 1:
             raise ValueError("This sampler only takes one variable.")
 
-        (var,) = pm.inputvars(vars)
+        (var,) = vars
 
-        if not isinstance(var.distribution, DiscreteMarkovChain):
+        if not var.owner or not isinstance(var.owner.op, DiscreteMarkovChainFactory):
             raise TypeError("This sampler only samples `DiscreteMarkovChain`s.")
 
         model = pm.modelcontext(model)
 
-        self.vars = [var]
+        self.vars = [model.rvs_to_values[var]]
+
+        if rng is None:
+            rng = np.random.RandomState()
+
+        self.rng = rng
+
+        def get_ancestors(v):
+            """This is a ``RandomVariable``-aware means of obtaining ancestors.
+
+            It won't walk a ``RandomVariable``'s RNG object.
+            """
+            if v.owner and isinstance(v.owner.op, RandomVariable):
+                return walk_no_states([v])
+            else:
+                return vars_between(list(graph_inputs([v])), [v])
 
         self.dependent_rvs = [
-            v
-            for v in model.basic_RVs
-            if v is not var and var in graph_inputs([v.logpt])
+            v for v in model.basic_RVs if v is not var and var in get_ancestors(v)
         ]
+
+        if not self.dependent_rvs:
+            raise ValueError(f"Could not find variables that depend on {var}")
 
         dep_comps_logp_stacked = []
         for i, dependent_rv in enumerate(self.dependent_rvs):
-            if isinstance(dependent_rv.distribution, SwitchingProcess):
+            if dependent_rv.owner and isinstance(
+                dependent_rv.owner.op, SwitchingProcessFactory
+            ):
                 comp_logps = []
 
                 # Get the log-likelihoood sequences for each state in this
                 # `SwitchingProcess` observations distribution
-                for comp_dist in dependent_rv.distribution.comp_dists:
-                    comp_logps.append(comp_dist.logp(dependent_rv))
+                for comp_dist in dependent_rv.owner.inputs[
+                    4 : -len(dependent_rv.owner.op.shared_inputs)
+                ]:
+                    new_comp_dist = conform_rv_shape(comp_dist, dependent_rv.shape)
+                    state_logp = logpt(new_comp_dist, dependent_rv.tag.observations)
+                    comp_logps.append(state_logp)
 
                 comp_logp_stacked = at.stack(comp_logps)
             else:
@@ -167,15 +223,18 @@ class FFBSStep(BlockedStep):
             dep_comps_logp_stacked.append(comp_logp_stacked)
 
         comp_logp_stacked = at.sum(dep_comps_logp_stacked, axis=0)
+        self.log_lik_states = model.fn(comp_logp_stacked)
 
-        # XXX: This isn't correct.
-        M = var.owner.inputs[2].eval(model.test_point)
-        N = model.test_point[var.name].shape[-1]
+        Gammas_var = var.owner.inputs[3]
+        gamma_0_var = var.owner.inputs[4]
+
+        Gammas_initial_shape = model.fn(Gammas_var.shape)(model.initial_point)
+        M = Gammas_initial_shape[-1]
+        N = Gammas_initial_shape[-3]
         self.alphas = np.empty((M, N), dtype=float)
 
-        self.log_lik_states = model.fn(comp_logp_stacked)
-        self.gamma_0_fn = model.fn(var.distribution.gamma_0)
-        self.Gammas_fn = model.fn(var.distribution.Gammas)
+        self.gamma_0_fn = model.fn(gamma_0_var)
+        self.Gammas_fn = model.fn(Gammas_var)
 
     def step(self, point):
         gamma_0 = self.gamma_0_fn(point)
@@ -184,15 +243,19 @@ class FFBSStep(BlockedStep):
         # TODO: Can we update these in-place (e.g. using a shared variable)?
         log_lik_state_vals = self.log_lik_states(point)
         ffbs_step(
-            gamma_0, Gammas_t, log_lik_state_vals, self.alphas, point[self.vars[0].name]
+            gamma_0,
+            Gammas_t,
+            log_lik_state_vals,
+            self.alphas,
+            point[self.vars[0].name],
+            rng=self.rng,
         )
         return point
 
     @staticmethod
     def competence(var):
-        distribution = getattr(var.distribution, "parent_dist", var.distribution)
 
-        if isinstance(distribution, DiscreteMarkovChain):
+        if var.owner and isinstance(var.owner.op, DiscreteMarkovChainFactory):
             return Competence.IDEAL
         # elif isinstance(distribution, pm.Bernoulli) or (var.dtype in pm.bool_types):
         #     return Competence.COMPATIBLE
@@ -242,7 +305,7 @@ class TransMatConjugateStep(ArrayStep):
         if isinstance(model_vars, Variable):
             model_vars = [model_vars]
 
-        model_vars = list(chain.from_iterable([pm.inputvars(v) for v in model_vars]))
+        model_vars = list(model_vars)
 
         # TODO: Are the rows in this matrix our `dir_priors`?
         dir_priors = []
@@ -256,7 +319,7 @@ class TransMatConjugateStep(ArrayStep):
         state_seqs = [
             v
             for v in model.vars + model.observed_RVs
-            if isinstance(v.distribution, DiscreteMarkovChain)
+            if (v.owner.op and isinstance(v.owner.op, DiscreteMarkovChainFactory))
             and all(d in graph_inputs([v.distribution.Gammas]) for d in dir_priors)
         ]
 
@@ -285,7 +348,9 @@ class TransMatConjugateStep(ArrayStep):
         self.dists = list(dir_priors)
         self.state_seq_name = state_seq.name
 
-        super().__init__(dir_priors, [], allvars=True)
+        super().__init__(
+            [model.rvs_to_values[dp] for dp in dir_priors], [], allvars=True
+        )
 
     def _set_row_mappings(self, Gamma, dir_priors, model):
         """Create maps from Dirichlet priors parameters to rows and slices in the transition matrix.
@@ -429,11 +494,7 @@ class TransMatConjugateStep(ArrayStep):
     @staticmethod
     def competence(var):
 
-        # TODO: Check that the dependent term is a conjugate type.
-
-        distribution = getattr(var.distribution, "parent_dist", var.distribution)
-
-        if isinstance(distribution, pm.Dirichlet):
+        if var.owner and isinstance(var.owner.op, pm.Dirichlet):
             return Competence.COMPATIBLE
 
         return Competence.INCOMPATIBLE
