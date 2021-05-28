@@ -15,6 +15,8 @@ from pymc3_hmm.distributions import (
     PoissonZeroProcess,
     SwitchingProcess,
     distribution_subset_args,
+    HorseShoeLike,
+    SlashNormal
 )
 from tests.utils import simulate_poiszero_hmm
 
@@ -588,3 +590,11 @@ def test_subset_args():
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx, point=test_point)
     assert np.array_equal(res[0].eval(), np.r_[2.0, 4.0])
     assert np.array_equal(res[1].eval(), np.r_[10, 12])
+
+
+
+def test_HorseShoeLike():
+    test_dist = SlashNormal.dist(1, shape = (10, ))
+
+    test_sample = test_dist.random(size=3)
+    assert test_sample.shape == (3,  10)

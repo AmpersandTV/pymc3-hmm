@@ -1,7 +1,7 @@
 import warnings
 
 import numpy as np
-
+import math
 try:  # pragma: no cover
     import aesara
     import aesara.tensor as at
@@ -22,7 +22,6 @@ from pymc3.distributions.distribution import _DrawValuesContext, draw_values
 from pymc3.distributions.mixture import _conversion_map, all_discrete
 
 from pymc3_hmm.utils import tt_broadcast_arrays, tt_expand_dims, vsearchsorted
-
 
 def distribution_subset_args(dist, shape, idx, point=None):
     """Obtain subsets of a distribution parameters via indexing.
@@ -446,3 +445,59 @@ class DiscreteMarkovChain(pm.Discrete):
 
     def _distr_parameters_for_repr(self):
         return ["Gammas", "gamma_0"]
+
+
+class HorseShoeLike(pm.Continuous):
+    """ A HorseShoe like distribution base on https://arxiv.org/pdf/1702.07400.pdf
+    The approximation using a uniform scale mixture of a Cauchy
+
+    ie. θi| λi, τ ∼ Cauchy(0, λiτ)
+        λi        ∼ Uniform(0, 1)
+
+        where pdf = 1/(2πτ) * log(1 + τ^2/θ_i^2)
+    """
+    def __init__(self, tau, *args, **kwargs):
+        self.tau = tau
+        super().__init__(**kwargs)
+
+    def logp(self, values):
+        """
+        log theta = 1/(*pi*alpha^(1/2)) * (1/(1 + alpha/theta^2)) * theta
+        """
+        alpha = self.tau**2
+        return 1/(np.pi*np.abs(self.tau)) * (1/(1 + alpha/values**2)) * values
+
+    def _random(self,  tau, size=None):
+        """
+
+        """
+        u = np.random.uniform(size=size)
+        lmbd = np.random.uniform(size=size)
+        return tau*lmbd * np.tan(np.pi * (u - 0.5))
+
+    def random(self, point=None, size=None):
+        tau = draw_values([self.tau], point=point, size=size)
+        return pm.distributions.generate_samples(
+            self._random, tau=tau, dist_shape=self.shape, size=size
+        )
+
+class SlashNormal(pm.Continuous):
+
+    def __init__(self, tau, *args, **kwargs):
+        self.tau = tau
+        super().__init__(**kwargs)
+
+    def logp(self, values):
+        return 0
+
+    def _random(self,tau, size = None):
+        si = np.random.pareto(0.5, size = size)
+        ti = np.random.normal(0, scale=si, size = size)
+
+        return np.random.normal(0, scale=tau**2/si**2, size = size)
+
+    def random(self, point=None, size=None):
+        tau = draw_values([self.tau], point=point, size=size)
+        return pm.distributions.generate_samples(
+                    self._random, tau=tau, dist_shape=self.shape, size=size
+                )
