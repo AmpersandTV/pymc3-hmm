@@ -447,7 +447,7 @@ class DiscreteMarkovChain(pm.Discrete):
         return ["Gammas", "gamma_0"]
 
 
-class HorseShoeLike(pm.Continuous):
+class HorseshoeLike(pm.Continuous):
     """The Horseshoe-like distribution.
     
     The approximation can be expressed as a uniform scale mixture of a Cauchy:
