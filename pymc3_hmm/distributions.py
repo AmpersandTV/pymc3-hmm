@@ -465,9 +465,6 @@ class HorseshoeLike(pm.Continuous):
         super().__init__(**kwargs)
 
     def logp(self, values):
-        """
-        log theta = 1/(*pi*alpha^(1/2)) * (1/(1 + alpha/theta^2)) * theta
-        """
         alpha = self.tau**2
         return 1/(np.pi*np.abs(self.tau)) * (1/(1 + alpha/values**2)) * values
 
