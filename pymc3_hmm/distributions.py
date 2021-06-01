@@ -448,13 +448,17 @@ class DiscreteMarkovChain(pm.Discrete):
 
 
 class HorseShoeLike(pm.Continuous):
-    """ A HorseShoe like distribution base on https://arxiv.org/pdf/1702.07400.pdf
-    The approximation using a uniform scale mixture of a Cauchy
+    """The Horseshoe-like distribution.
+    
+    The approximation can be expressed as a uniform scale mixture of a Cauchy:
+    .. math::
+        \theta_i \mid \lambda_i, \tau &\sim \operatorname{Cauchy}(0, lambda_i \tau)
+        \lambda_i &\sim \operatorname{Uniform}(0, 1)
 
-    ie. θi| λi, τ ∼ Cauchy(0, λiτ)
-        λi        ∼ Uniform(0, 1)
+    where :math:`p(\theta_i \mid \tau) = \frac{1}{2 \pi \tau}  \log(1 + \tau^2 / \lambda_i^2)`
+        
+    .. [hsl] Bhadra, A., Datta, J., Polson, N.G., Willard, B.T. The Horseshoe-Like Regularization for Feature Subset Selection. Sankhya B 83, 185–214 (2021).
 
-        where pdf = 1/(2πτ) * log(1 + τ^2/θ_i^2)
     """
     def __init__(self, tau, *args, **kwargs):
         self.tau = tau
