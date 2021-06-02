@@ -17,7 +17,9 @@ setup(
     install_requires=[
         "numpy>=1.18.1",
         "scipy>=1.4.0",
-        "pymc3>=4.0.0",
+        # XXX TODO: These are temporary and only for testing.
+        # "pymc3>=4.0.0",
+        "pymc3 @ git+https://github.com/brandonwillard/pymc3.git@main#egg=pymc3-4.0.0",  # noqa: E501
         "aesara>=2.0.10",
     ],
     tests_require=["pytest"],
