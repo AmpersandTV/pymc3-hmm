@@ -1,4 +1,3 @@
-import aesara
 import aesara.tensor as at
 import numpy as np
 import pytest
@@ -7,9 +6,9 @@ import scipy as sp
 from pymc3_hmm.utils import (
     compute_trans_freqs,
     logdotexp,
+    logsumexp,
     multilogit_inv,
-    tt_logdotexp,
-    tt_logsumexp,
+    np_logdotexp,
 )
 
 
@@ -35,62 +34,60 @@ def test_compute_trans_freqs():
 )
 def test_logsumexp(test_input):
     np_res = sp.special.logsumexp(test_input)
-    tt_res = tt_logsumexp(at.as_tensor_variable(test_input)).eval()
-    assert np.array_equal(np_res, tt_res)
+    at_res = logsumexp(at.as_tensor_variable(test_input)).eval()
+    assert np.array_equal(np_res, at_res)
 
 
-def test_logdotexp():
+def test_np_logdotexp():
     A = np.c_[[1.0, 2.0], [3.0, 4.0], [10.0, 20.0]]
     b = np.c_[[0.1], [0.2], [30.0]].T
 
-    test_res = logdotexp(np.log(A), np.log(b))
+    test_res = np_logdotexp(np.log(A), np.log(b))
     assert test_res.shape == (2, 1)
     assert np.allclose(A.dot(b), np.exp(test_res))
 
     b = np.r_[0.1, 0.2, 30.0]
-    test_res = logdotexp(np.log(A), np.log(b))
+    test_res = np_logdotexp(np.log(A), np.log(b))
     assert test_res.shape == (2,)
     assert np.allclose(A.dot(b), np.exp(test_res))
 
     A = np.c_[[1.0, 2.0], [10.0, 20.0]]
     b = np.c_[[0.1], [0.2]].T
-    test_res = logdotexp(np.log(A), np.log(b))
+    test_res = np_logdotexp(np.log(A), np.log(b))
     assert test_res.shape == (2, 1)
     assert np.allclose(A.dot(b), np.exp(test_res))
 
     b = np.r_[0.1, 0.2]
-    test_res = logdotexp(np.log(A), np.log(b))
+    test_res = np_logdotexp(np.log(A), np.log(b))
     assert test_res.shape == (2,)
     assert np.allclose(A.dot(b), np.exp(test_res))
 
 
-def test_tt_logdotexp():
+def test_at_logdotexp():
 
     np.seterr(over="ignore", under="ignore")
-
-    aesara.config.compute_test_value = "warn"
 
     A = np.c_[[1.0, 2.0], [3.0, 4.0], [10.0, 20.0]]
     b = np.c_[[0.1], [0.2], [30.0]].T
     A_tt = at.as_tensor_variable(A)
     b_tt = at.as_tensor_variable(b)
-    test_res = tt_logdotexp(at.log(A_tt), at.log(b_tt)).eval()
+    test_res = logdotexp(at.log(A_tt), at.log(b_tt)).eval()
     assert test_res.shape == (2, 1)
     assert np.allclose(A.dot(b), np.exp(test_res))
 
     b = np.r_[0.1, 0.2, 30.0]
-    test_res = tt_logdotexp(at.log(A), at.log(b)).eval()
+    test_res = logdotexp(at.log(A), at.log(b)).eval()
     assert test_res.shape == (2,)
     assert np.allclose(A.dot(b), np.exp(test_res))
 
     A = np.c_[[1.0, 2.0], [10.0, 20.0]]
     b = np.c_[[0.1], [0.2]].T
-    test_res = tt_logdotexp(at.log(A), at.log(b)).eval()
+    test_res = logdotexp(at.log(A), at.log(b)).eval()
     assert test_res.shape == (2, 1)
     assert np.allclose(A.dot(b), np.exp(test_res))
 
     b = np.r_[0.1, 0.2]
-    test_res = tt_logdotexp(at.log(A), at.log(b)).eval()
+    test_res = logdotexp(at.log(A), at.log(b)).eval()
     assert test_res.shape == (2,)
     assert np.allclose(A.dot(b), np.exp(test_res))
 
