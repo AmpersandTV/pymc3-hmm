@@ -48,7 +48,8 @@ jobs:
     strategy:
       matrix:
         python-version: [3.7]
-        pymc3-version: [stable, dev]
+        pymc3-version: [stable]
+        # pymc3-version: [stable, dev]
 
     steps:
     - uses: actions/checkout@v2
