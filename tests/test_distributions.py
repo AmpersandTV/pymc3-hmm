@@ -11,6 +11,7 @@ import pymc3 as pm
 import pytest
 
 from pymc3_hmm.distributions import (
+    Constant,
     DiscreteMarkovChain,
     PoissonZeroProcess,
     SwitchingProcess,
@@ -369,7 +370,7 @@ def test_DiscreteMarkovChain_logp():
 
 def test_SwitchingProcess_random():
     test_states = np.r_[0, 0, 1, 1, 0, 1]
-    mu_zero_nonzero = [pm.Constant.dist(0), pm.Constant.dist(1)]
+    mu_zero_nonzero = [Constant.dist(0), Constant.dist(1)]
     test_dist = SwitchingProcess.dist(mu_zero_nonzero, test_states)
     assert np.array_equal(test_dist.shape, test_states.shape)
     test_sample = test_dist.random()
@@ -388,7 +389,7 @@ def test_SwitchingProcess_random():
     assert np.all(test_sample[..., test_states > 0] > 0)
 
     test_states = np.r_[0, 0, 1, 1, 0, 1]
-    test_mus = [pm.Constant.dist(i) for i in range(6)]
+    test_mus = [Constant.dist(i) for i in range(6)]
     test_dist = SwitchingProcess.dist(test_mus, test_states)
     assert np.array_equal(test_dist.shape, test_states.shape)
     test_sample = test_dist.random()
@@ -406,7 +407,7 @@ def test_SwitchingProcess_random():
     # six state sequences--each of length one.  This should give us six samples
     # of either five zeros or the values 1 to 5.
     test_dist = SwitchingProcess.dist(
-        [pm.Constant.dist(0), pm.Constant.dist(test_mus)], test_states
+        [Constant.dist(0), Constant.dist(test_mus)], test_states
     )
     assert np.array_equal(test_dist.shape, (6, 5))
     test_sample = test_dist.random()
@@ -416,13 +417,13 @@ def test_SwitchingProcess_random():
     test_states = np.c_[0, 0, 1, 1, 0, 1]
     test_mus = np.arange(1, 7).astype(float)
     test_dist = SwitchingProcess.dist(
-        [pm.Constant.dist(0), pm.Constant.dist(test_mus)], test_states
+        [Constant.dist(0), Constant.dist(test_mus)], test_states
     )
     assert np.array_equal(test_dist.shape, test_states.shape)
 
     test_states = np.r_[0, 0, 1, 1, 0, 1]
     test_sample = SwitchingProcess.dist(
-        [pm.Constant.dist(0), pm.Constant.dist(test_mus)], test_states
+        [Constant.dist(0), Constant.dist(test_mus)], test_states
     ).random(size=3)
     assert np.array_equal(test_sample.shape, (3,) + test_mus.shape)
     assert np.all(test_sample.sum(0)[..., test_states > 0] > 0)
@@ -432,7 +433,7 @@ def test_PoissonZeroProcess_point():
     test_states = np.r_[0, 0, 1, 1, 0, 1]
 
     with pm.Model():
-        test_mean = pm.Constant("c", 1000.0)
+        test_mean = Constant("c", 1000.0)
         test_point = {"c": 100.0}
         test_sample = PoissonZeroProcess.dist(test_mean, test_states).random(
             point=test_point
@@ -457,7 +458,7 @@ def test_SwitchingProcess():
     np.random.seed(2023532)
 
     test_states = np.r_[2, 0, 1, 2, 0, 1]
-    test_dists = [pm.Constant.dist(0), pm.Poisson.dist(100.0), pm.Poisson.dist(1000.0)]
+    test_dists = [Constant.dist(0), pm.Poisson.dist(100.0), pm.Poisson.dist(1000.0)]
     test_dist = SwitchingProcess.dist(test_dists, test_states)
     assert np.array_equal(test_dist.shape, test_states.shape)
 
@@ -470,7 +471,7 @@ def test_SwitchingProcess():
 
     test_mus = np.r_[100, 100, 500, 100, 100, 100]
     test_dists = [
-        pm.Constant.dist(0),
+        Constant.dist(0),
         pm.Poisson.dist(test_mus),
         pm.Poisson.dist(10000.0),
     ]
@@ -483,7 +484,7 @@ def test_SwitchingProcess():
     assert np.all(0 < test_sample[5] < 200)
     assert np.all(5000 < test_sample[test_states == 2])
 
-    test_dists = [pm.Constant.dist(0), pm.Poisson.dist(100.0), pm.Poisson.dist(1000.0)]
+    test_dists = [Constant.dist(0), pm.Poisson.dist(100.0), pm.Poisson.dist(1000.0)]
     test_dist = SwitchingProcess.dist(test_dists, test_states)
     for i in range(len(test_dists)):
         test_logp = test_dist.logp(
@@ -510,7 +511,7 @@ def test_SwitchingProcess():
 
     # Make sure we can use a large number of distributions in the mixture
     test_states = np.ones(50)
-    test_dists = [pm.Constant.dist(i) for i in range(50)]
+    test_dists = [Constant.dist(i) for i in range(50)]
     test_dist = SwitchingProcess.dist(test_dists, test_states)
     assert np.array_equal(test_dist.shape, test_states.shape)
 
@@ -532,9 +533,7 @@ def test_SwitchingProcess():
     # Evaluate multiple observed state sequences in an extreme case
     test_states = at.imatrix("states")
     test_states.tag.test_value = np.zeros((10, 4)).astype("int32")
-    test_dist = SwitchingProcess.dist(
-        [pm.Constant.dist(0), pm.Constant.dist(1)], test_states
-    )
+    test_dist = SwitchingProcess.dist([Constant.dist(0), Constant.dist(1)], test_states)
     test_obs = np.tile(np.arange(4), (10, 1)).astype("int32")
     test_logp = test_dist.logp(test_obs)
     exp_logp = np.tile(
@@ -545,7 +544,7 @@ def test_SwitchingProcess():
 
 def test_subset_args():
 
-    test_dist = pm.Constant.dist(c=np.r_[0.1, 1.2, 2.3])
+    test_dist = Constant.dist(c=np.r_[0.1, 1.2, 2.3])
     test_idx = np.r_[0, 2]
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx)
     assert np.array_equal(res[0].eval(), np.r_[0.1, 2.3])

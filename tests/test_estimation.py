@@ -20,7 +20,7 @@ except ImportError:
 
 import pymc3 as pm
 
-from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
+from pymc3_hmm.distributions import Constant, DiscreteMarkovChain, SwitchingProcess
 from pymc3_hmm.step_methods import FFBSStep
 from pymc3_hmm.utils import multilogit_inv
 
@@ -56,7 +56,7 @@ def create_dirac_zero_hmm(X, mu, xis, observed):
         V_rv.tag.test_value = (observed.get_value() > 0) * 1
     Y_rv = SwitchingProcess(
         "Y_t",
-        [pm.Constant.dist(0), pm.Constant.dist(mu)],
+        [Constant.dist(np.array(0, dtype=np.int64)), Constant.dist(mu)],
         V_rv,
         observed=observed,
     )
@@ -83,7 +83,7 @@ def test_only_positive_state():
 
         _ = SwitchingProcess(
             "Y_t",
-            [pm.Constant.dist(0), pm.Constant.dist(mu)],
+            [Constant.dist(np.array(0, dtype=np.int64)), Constant.dist(mu)],
             V_rv,
             observed=y_t,
         )
