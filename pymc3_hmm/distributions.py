@@ -18,7 +18,12 @@ except ImportError:  # pragma: no cover
     from theano.tensor.extra_ops import broadcast_to as at_broadcast_to
 
 import pymc3 as pm
-from pymc3.distributions.distribution import _DrawValuesContext, draw_values
+from pymc3.distributions.distribution import (
+    Distribution,
+    _DrawValuesContext,
+    draw_values,
+    generate_samples,
+)
 from pymc3.distributions.mixture import _conversion_map, all_discrete
 
 from pymc3_hmm.utils import tt_broadcast_arrays, tt_expand_dims, vsearchsorted
@@ -91,7 +96,7 @@ def distribution_subset_args(dist, shape, idx, point=None):
 
 
 def get_and_check_comp_value(x):
-    if isinstance(x, pm.Distribution):
+    if isinstance(x, Distribution):
         try:
             return x.default()
         except AttributeError:
@@ -105,7 +110,7 @@ def get_and_check_comp_value(x):
         )
 
 
-class SwitchingProcess(pm.Distribution):
+class SwitchingProcess(Distribution):
     """A distribution that models a switching process over arbitrary univariate mixtures and a state sequence.
 
     This class is like `Mixture`, but without the mixture weights.
@@ -278,7 +283,11 @@ class PoissonZeroProcess(SwitchingProcess):
         self.mu = at.as_tensor_variable(pm.floatX(mu))
         self.states = at.as_tensor_variable(states)
 
-        super().__init__([pm.Constant.dist(0), pm.Poisson.dist(mu)], states, **kwargs)
+        super().__init__(
+            [Constant.dist(np.array(0, dtype=np.int64)), pm.Poisson.dist(mu)],
+            states,
+            **kwargs
+        )
 
 
 class DiscreteMarkovChain(pm.Discrete):
@@ -446,3 +455,44 @@ class DiscreteMarkovChain(pm.Discrete):
 
     def _distr_parameters_for_repr(self):
         return ["Gammas", "gamma_0"]
+
+
+class Constant(Distribution):
+    r"""Constant log-likelihood.
+
+    Parameters
+    ----------
+    value: float or int
+        Constant parameter.
+    """
+
+    def __init__(self, c, shape=(), defaults=("mode",), **kwargs):
+
+        c = at.as_tensor_variable(c)
+
+        dtype = c.dtype
+
+        if kwargs.get("transform", None) is not None:
+            raise ValueError(
+                "Transformations for constant distributions are not allowed."
+            )  # pragma: no cover
+
+        super().__init__(shape, dtype, defaults=defaults, **kwargs)
+
+        self.mean = self.median = self.mode = self.c = c
+
+    def random(self, point=None, size=None):
+        c = draw_values([self.c], point=point, size=size)[0]
+
+        def _random(c, dtype=self.dtype, size=None):
+            return np.full(size, fill_value=c, dtype=dtype)
+
+        return generate_samples(_random, c=c, dist_shape=self.shape, size=size).astype(
+            self.dtype
+        )
+
+    def logp(self, value):
+        return at.switch(at.eq(value, self.c), 0.0, -np.inf)
+
+    def _distr_parameters_for_repr(self):
+        return ["c"]
