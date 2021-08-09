@@ -1,17 +1,12 @@
 import warnings
 
+import aesara
+import aesara.tensor as at
 import numpy as np
-
-try:
-    import aesara.tensor as at
-    from aesara.graph.op import get_test_value
-except ImportError:
-    import theano.tensor as at
-    from theano.graph.op import get_test_value
-
 import pymc3 as pm
 import pytest
 import scipy as sp
+from aesara.graph.op import get_test_value
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, PoissonZeroProcess
 from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep, ffbs_step
@@ -25,14 +20,30 @@ def raise_under_overflow():
         yield
 
 
+@pytest.fixture(scope="module", autouse=True)
+def set_aesara_flags():
+    with aesara.config.change_flags(on_opt_error="raise", on_shape_error="raise"):
+        yield
+
+
 # All tests in this module will raise on over- and under-flows (unless local
 # settings dictate otherwise)
 pytestmark = pytest.mark.usefixtures("raise_under_overflow")
 
 
-def test_ffbs_step():
+def transform_var(model, rv_var):
+    value_var = model.rvs_to_values[rv_var]
+    transform = getattr(value_var.tag, "transform", None)
+    if transform is not None:
+        untrans_value_var = transform.forward(rv_var, value_var)
+        untrans_value_var.name = rv_var.name
+        return untrans_value_var
+    else:
+        return value_var
 
-    np.random.seed(2032)
+
+def test_ffbs_step():
+    rng = np.random.RandomState(2032)
 
     # A single transition matrix and initial probabilities vector for each
     # element in the state sequence
@@ -44,7 +55,7 @@ def test_ffbs_step():
     )
     alphas = np.empty(test_log_lik_0.shape)
     res = np.empty(test_log_lik_0.shape[-1])
-    ffbs_step(test_gamma_0, test_Gammas, test_log_lik_0, alphas, res)
+    ffbs_step(test_gamma_0, test_Gammas, test_log_lik_0, alphas, res, rng)
     assert np.all(res == 0)
 
     test_log_lik_1 = np.stack(
@@ -52,15 +63,15 @@ def test_ffbs_step():
     )
     alphas = np.empty(test_log_lik_1.shape)
     res = np.empty(test_log_lik_1.shape[-1])
-    ffbs_step(test_gamma_0, test_Gammas, test_log_lik_1, alphas, res)
+    ffbs_step(test_gamma_0, test_Gammas, test_log_lik_1, alphas, res, rng)
     assert np.all(res == 1)
 
     # A well-separated mixture with non-degenerate likelihoods
-    test_seq = np.random.choice(2, size=10000)
+    test_seq = rng.choice(2, size=10000)
     test_obs = np.where(
         np.logical_not(test_seq),
-        np.random.poisson(10, 10000),
-        np.random.poisson(50, 10000),
+        rng.poisson(10, 10000),
+        rng.poisson(50, 10000),
     )
     test_log_lik_p = np.stack(
         [sp.stats.poisson.logpmf(test_obs, 10), sp.stats.poisson.logpmf(test_obs, 50)],
@@ -71,7 +82,7 @@ def test_ffbs_step():
 
     alphas = np.empty(test_log_lik_p.shape)
     res = np.empty(test_log_lik_p.shape[-1])
-    ffbs_step(test_gamma_0, test_Gammas, test_log_lik_p, alphas, res)
+    ffbs_step(test_gamma_0, test_Gammas, test_log_lik_p, alphas, res, rng)
     # TODO FIXME: This is a statistically unsound/unstable check.
     assert np.mean(np.abs(res - test_seq)) < 1e-2
 
@@ -95,61 +106,73 @@ def test_ffbs_step():
 
     alphas = np.empty(test_log_lik.shape)
     res = np.empty(test_log_lik.shape[-1])
-    ffbs_step(test_gamma_0, test_Gammas, test_log_lik, alphas, res)
+    ffbs_step(test_gamma_0, test_Gammas, test_log_lik, alphas, res, rng)
     assert np.array_equal(res, np.r_[1, 0, 0, 1])
 
 
-def test_FFBSStep():
+def test_FFBSStep_errors():
 
     with pm.Model(), pytest.raises(ValueError):
-        P_rv = np.eye(2)[None, ...]
-        S_rv = DiscreteMarkovChain("S_t", P_rv, np.r_[1.0, 0.0], shape=10)
-        S_2_rv = DiscreteMarkovChain("S_2_t", P_rv, np.r_[0.0, 1.0], shape=10)
+        P_rv = np.broadcast_to(np.eye(2), (10, 2, 2))
+        S_rv = DiscreteMarkovChain("S_t", P_rv, np.r_[1.0, 0.0])
+        S_2_rv = DiscreteMarkovChain("S_2_t", P_rv, np.r_[0.0, 1.0])
         PoissonZeroProcess(
             "Y_t", 9.0, S_rv + S_2_rv, observed=np.random.poisson(9.0, size=10)
         )
         # Only one variable can be sampled by this step method
-        ffbs = FFBSStep([S_rv, S_2_rv])
+        FFBSStep([S_rv, S_2_rv])
 
     with pm.Model(), pytest.raises(TypeError):
-        S_rv = pm.Categorical("S_t", np.r_[1.0, 0.0], shape=10)
+        S_rv = pm.Categorical("S_t", np.r_[1.0, 0.0], size=10)
         PoissonZeroProcess("Y_t", 9.0, S_rv, observed=np.random.poisson(9.0, size=10))
         # Only `DiscreteMarkovChains` can be sampled with this step method
-        ffbs = FFBSStep([S_rv])
+        FFBSStep([S_rv])
 
     with pm.Model(), pytest.raises(TypeError):
-        P_rv = np.eye(2)[None, ...]
-        S_rv = DiscreteMarkovChain("S_t", P_rv, np.r_[1.0, 0.0], shape=10)
+        P_rv = np.broadcast_to(np.eye(2), (10, 2, 2))
+        S_rv = DiscreteMarkovChain("S_t", P_rv, np.r_[1.0, 0.0])
         pm.Poisson("Y_t", S_rv, observed=np.random.poisson(9.0, size=10))
         # Only `SwitchingProcess`es can used as dependent variables
-        ffbs = FFBSStep([S_rv])
+        FFBSStep([S_rv])
 
-    np.random.seed(2032)
 
-    poiszero_sim, _ = simulate_poiszero_hmm(30, 150)
+def test_FFBSStep_sim():
+    rng = np.random.RandomState(2031)
+
+    poiszero_sim, _ = simulate_poiszero_hmm(30, 150, rng=rng)
     y_test = poiszero_sim["Y_t"]
 
-    with pm.Model() as test_model:
-        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
-        p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
+    with pm.Model(rng_seeder=rng) as test_model:
+        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+        p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
 
         P_tt = at.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
 
-        pi_0_tt = compute_steady_state(P_rv)
+        P_rv = pm.Deterministic(
+            "P_tt", at.broadcast_to(P_tt, (y_test.shape[0],) + tuple(P_tt.shape))
+        )
 
-        S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
+        pi_0_tt = compute_steady_state(P_tt)
+
+        S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt)
 
         PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
 
     with test_model:
-        ffbs = FFBSStep([S_rv])
+        ffbs = FFBSStep([S_rv], rng=rng)
 
-    test_point = test_model.test_point.copy()
-    test_point["p_0_stickbreaking__"] = poiszero_sim["p_0_stickbreaking__"]
-    test_point["p_1_stickbreaking__"] = poiszero_sim["p_1_stickbreaking__"]
+    p_0_stickbreaking__fn = aesara.function(
+        [test_model.rvs_to_values[p_0_rv]], transform_var(test_model, p_0_rv)
+    )
+    p_1_stickbreaking__fn = aesara.function(
+        [test_model.rvs_to_values[p_1_rv]], transform_var(test_model, p_1_rv)
+    )
 
-    res = ffbs.step(test_point)
+    initial_point = test_model.initial_point.copy()
+    initial_point["p_0_stickbreaking__"] = p_0_stickbreaking__fn(poiszero_sim["p_0"])
+    initial_point["p_1_stickbreaking__"] = p_1_stickbreaking__fn(poiszero_sim["p_1"])
+
+    res = ffbs.step(initial_point)
 
     assert np.array_equal(res["S_t"], poiszero_sim["S_t"])
 
@@ -157,39 +180,37 @@ def test_FFBSStep():
 def test_FFBSStep_extreme():
     """Test a long series with extremely large mixture separation (and, thus, very small likelihoods)."""  # noqa: E501
 
-    np.random.seed(2032)
+    rng = np.random.RandomState(222)
 
     mu_true = 5000
-    poiszero_sim, _ = simulate_poiszero_hmm(9000, mu_true)
+    poiszero_sim, _ = simulate_poiszero_hmm(9000, mu_true, rng=rng)
     y_test = poiszero_sim["Y_t"]
 
-    with pm.Model() as test_model:
+    with pm.Model(rng_seeder=rng) as test_model:
         p_0_rv = poiszero_sim["p_0"]
         p_1_rv = poiszero_sim["p_1"]
 
         P_tt = at.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
+        P_rv = pm.Deterministic(
+            "P_tt", at.broadcast_to(P_tt, (y_test.shape[0],) + tuple(P_tt.shape))
+        )
 
         pi_0_tt = poiszero_sim["pi_0"]
 
-        S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
+        S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt)
         S_rv.tag.test_value = (y_test > 0).astype(int)
 
         # This prior is very far from the true value...
-        E_mu, Var_mu = 100.0, 10000.0
+        E_mu, Var_mu = 500.0, 10000.0
         mu_rv = pm.Gamma("mu", E_mu ** 2 / Var_mu, E_mu / Var_mu)
 
         PoissonZeroProcess("Y_t", mu_rv, S_rv, observed=y_test)
 
     with test_model:
-        ffbs = FFBSStep([S_rv])
-
-    test_point = test_model.test_point.copy()
-    test_point["p_0_stickbreaking__"] = poiszero_sim["p_0_stickbreaking__"]
-    test_point["p_1_stickbreaking__"] = poiszero_sim["p_1_stickbreaking__"]
+        ffbs = FFBSStep([S_rv], rng=rng)
 
     with np.errstate(over="ignore", under="ignore"):
-        res = ffbs.step(test_point)
+        res = ffbs.step(test_model.initial_point)
 
     assert np.array_equal(res["S_t"], poiszero_sim["S_t"])
 
@@ -203,50 +224,53 @@ def test_FFBSStep_extreme():
         ffbs = FFBSStep([S_rv])
         steps = [ffbs, mu_step]
         trace = pm.sample(
-            20,
+            50,
             step=steps,
             cores=1,
             chains=1,
             tune=100,
             n_init=100,
-            progressbar=False,
+            progressbar=True,
         )
 
-        assert not trace.get_sampler_stats("diverging").all()
-        assert trace["mu"].mean() > 1000.0
+        assert not trace.sample_stats.diverging.all()
+        assert trace.posterior.mu.mean() > 1000.0
 
 
+@pytest.mark.xfail(reason="Not refactored for v4, yet.")
 def test_TransMatConjugateStep():
 
     with pm.Model() as test_model, pytest.raises(ValueError):
-        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
+        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
         transmat = TransMatConjugateStep(p_0_rv)
 
-    np.random.seed(2032)
+    rng = aesara.shared(np.random.RandomState(2032), borrow=True)
 
-    poiszero_sim, _ = simulate_poiszero_hmm(30, 150)
+    poiszero_sim, _ = simulate_poiszero_hmm(30, 150, rng=rng)
     y_test = poiszero_sim["Y_t"]
 
-    with pm.Model() as test_model:
-        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
-        p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
+    with pm.Model(default_rng=rng) as test_model:
+        p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+        p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
 
         P_tt = at.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
+        P_rv = pm.Deterministic(
+            "P_tt", at.broadcast_to(P_tt, (y_test.shape[0],) + tuple(P_tt.shape))
+        )
 
-        pi_0_tt = compute_steady_state(P_rv)
+        pi_0_tt = compute_steady_state(P_tt)
 
-        S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt, shape=y_test.shape[0])
+        S_rv = DiscreteMarkovChain("S_t", P_rv, pi_0_tt)
 
         PoissonZeroProcess("Y_t", 9.0, S_rv, observed=y_test)
 
     with test_model:
         transmat = TransMatConjugateStep(P_rv)
 
-    test_point = test_model.test_point.copy()
-    test_point["S_t"] = (y_test > 0).astype(int)
+    initial_point = test_model.initial_point.copy()
+    initial_point["S_t"] = (y_test > 0).astype(int)
 
-    res = transmat.step(test_point)
+    res = transmat.step(initial_point)
 
     p_0_smpl = get_test_value(
         p_0_rv.distribution.transform.backward(res[p_0_rv.transformed.name])
@@ -266,13 +290,14 @@ def test_TransMatConjugateStep():
     assert np.allclose(sampled_trans_mat, true_trans_mat, atol=0.3)
 
 
+@pytest.mark.xfail(reason="Not refactored for v4, yet.")
 def test_TransMatConjugateStep_subtensors():
 
     # Confirm that Dirichlet/non-Dirichlet mixed rows can be
     # parsed
     with pm.Model():
-        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
-        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
+        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
 
         p_0_rv = at.as_tensor([0, 0, 1])
         p_1_rv = at.zeros(3)
@@ -281,8 +306,10 @@ def test_TransMatConjugateStep_subtensors():
         p_2_rv = at.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
 
         P_tt = at.stack([p_0_rv, p_1_rv, p_2_rv])
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
-        DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
+        P_rv = pm.Deterministic(
+            "P_tt", at.broadcast_to(P_tt, (10,) + tuple(P_tt.shape))
+        )
+        DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0])
 
         transmat = TransMatConjugateStep(P_rv)
 
@@ -295,8 +322,8 @@ def test_TransMatConjugateStep_subtensors():
 
     # Same thing, just with some manipulations of the transition matrix
     with pm.Model():
-        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
-        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
+        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
 
         p_0_rv = at.as_tensor([0, 0, 1])
         p_1_rv = at.zeros(3)
@@ -307,8 +334,10 @@ def test_TransMatConjugateStep_subtensors():
         P_tt = at.horizontal_stack(
             p_0_rv[..., None], p_1_rv[..., None], p_2_rv[..., None]
         )
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt.T))
-        DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
+        P_rv = pm.Deterministic(
+            "P_tt", at.broadcast_to(P_tt.T, (10,) + tuple(P_tt.T.shape))
+        )
+        DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0])
 
         transmat = TransMatConjugateStep(P_rv)
 
@@ -321,8 +350,8 @@ def test_TransMatConjugateStep_subtensors():
 
     # Use an observed `DiscreteMarkovChain` and check the conjugate results
     with pm.Model():
-        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
-        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
+        d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1])
+        d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1])
 
         p_0_rv = at.as_tensor([0, 0, 1])
         p_1_rv = at.zeros(3)
@@ -333,9 +362,9 @@ def test_TransMatConjugateStep_subtensors():
         P_tt = at.horizontal_stack(
             p_0_rv[..., None], p_1_rv[..., None], p_2_rv[..., None]
         )
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt.T))
-        DiscreteMarkovChain(
-            "S_t", P_rv, np.r_[1, 0, 0], shape=(4,), observed=np.r_[0, 1, 0, 2]
+        P_rv = pm.Deterministic(
+            "P_tt", at.broadcast_to(P_tt.T, (4,) + tuple(P_tt.T.shape))
         )
+        DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], observed=np.r_[0, 1, 0, 2])
 
         transmat = TransMatConjugateStep(P_rv)

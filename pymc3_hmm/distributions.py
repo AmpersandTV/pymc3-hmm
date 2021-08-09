@@ -1,108 +1,213 @@
-import warnings
+from copy import copy
+from typing import Sequence
 
+import aesara
+import aesara.tensor as at
 import numpy as np
-
-try:  # pragma: no cover
-    import aesara
-    import aesara.tensor as at
-    from aesara.graph.op import get_test_value
-    from aesara.graph.utils import TestValueError
-    from aesara.scalar import upcast
-    from aesara.tensor.extra_ops import broadcast_to as at_broadcast_to
-except ImportError:  # pragma: no cover
-    import theano as aesara
-    import theano.tensor as at
-    from theano.graph.op import get_test_value
-    from theano.graph.utils import TestValueError
-    from theano.scalar import upcast
-    from theano.tensor.extra_ops import broadcast_to as at_broadcast_to
-
 import pymc3 as pm
-from pymc3.distributions.distribution import _DrawValuesContext, draw_values
-from pymc3.distributions.mixture import _conversion_map, all_discrete
-
-from pymc3_hmm.utils import tt_broadcast_arrays, tt_expand_dims, vsearchsorted
-
-
-def distribution_subset_args(dist, shape, idx, point=None):
-    """Obtain subsets of a distribution parameters via indexing.
-
-    This is used to effectively "lift" slices/`Subtensor` `Op`s up to a
-    distribution's parameters.  In other words, `pm.Normal(mu, sigma)[idx]`
-    becomes `pm.Normal(mu[idx], sigma[idx])`.  In computations, the former
-    requires the entire evaluation of `pm.Normal(mu, sigma)` (e.g. its `.logp`
-    or a sample from `.random`), which could be very complex, while the latter
-    only evaluates the subset of interest.
-
-    XXX: this lifting isn't appropriate for every distribution.  It's fine for
-    most scalar distributions and even some multivariate distributions, but
-    some required functionality is missing in order to handle even the latter.
-
-    Parameters
-    ----------
-    dist : Distribution
-        The distribution object with the parameters to be indexed.
-    shape : tuple or Shape
-        The shape of the distribution's output/support.  This is used
-        to (naively) determine the parameters' broadcasting pattern.
-    idx : ndarray or TensorVariable
-        The indices applied to the parameters of `dist`.
-    point : dict (optional)
-        A dictionary keyed on the `str` names of each parameter in `dist`,
-        which are mapped to NumPy values for the corresponding parameter.  When
-        this is given, the Theano parameters are replaced by their values in the
-        dictionary.
-
-    Returns
-    -------
-    res: list
-        An ordered set of broadcasted and indexed parameters for `dist`.
+from aesara.compile.builders import OpFromGraph
+from aesara.graph.basic import Constant
+from aesara.graph.fg import FunctionGraph
+from aesara.graph.op import compute_test_value
+from aesara.graph.opt import local_optimizer, pre_greedy_local_optimizer
+from aesara.scalar import upcast
+from aesara.tensor.basic import make_vector
+from aesara.tensor.extra_ops import BroadcastTo
+from aesara.tensor.random.basic import categorical
+from aesara.tensor.random.op import RandomVariable
+from aesara.tensor.random.opt import (
+    local_dimshuffle_rv_lift,
+    local_rv_size_lift,
+    local_subtensor_rv_lift,
+)
+from aesara.tensor.random.utils import broadcast_params, normalize_size_param
+from aesara.tensor.type_other import NoneConst
+from aesara.tensor.var import TensorVariable
+from pymc3.aesaraf import change_rv_size
+from pymc3.distributions.logprob import _logp, logpt
 
 
+@local_optimizer([BroadcastTo])
+def naive_bcast_rv_lift(fgraph, node):
+    """Lift a ``BroadcastTo`` through a ``RandomVariable`` ``Op``.
+
+    XXX: This implementation simply broadcasts the ``RandomVariable``'s
+    parameters, which won't always work (e.g. multivariate distributions).
+
+    TODO: Instead, it should use ``RandomVariable.ndim_supp``--and the like--to
+    determine which dimensions of each parameter need to be broadcasted.
+    Also, this doesn't need to remove ``size`` to perform the lifting, like it
+    currently does.
     """
 
-    dist_param_names = dist._distr_parameters_for_repr()
+    if not (
+        isinstance(node.op, BroadcastTo)
+        and node.inputs[0].owner
+        and isinstance(node.inputs[0].owner.op, RandomVariable)
+    ):
+        return
 
-    if point:
-        # Try to get a concrete/NumPy value if a `point` parameter was
-        # given.
-        try:
-            idx = get_test_value(idx)
-        except TestValueError:  # pragma: no cover
-            pass
+    bcast_shape = node.inputs[1:]
 
-    res = []
-    for param in dist_param_names:
+    assert len(bcast_shape) > 0
 
-        # Use the (sampled) point, if present
-        if point is None or param not in point:
-            x = getattr(dist, param, None)
+    rv_var = node.inputs[0]
+    rv_node = rv_var.owner
 
-            if x is None:
-                continue
-        else:
-            x = point[param]
+    if hasattr(fgraph, "dont_touch_vars") and rv_var in fgraph.dont_touch_vars:
+        return
 
-        bcast_res = at_broadcast_to(x, shape)
-
-        res.append(bcast_res[idx])
-
-    return res
-
-
-def get_and_check_comp_value(x):
-    if isinstance(x, pm.Distribution):
-        try:
-            return x.default()
-        except AttributeError:
-            pass
-
-        return x.random()
+    size_lift_res = local_rv_size_lift.transform(fgraph, rv_node)
+    if size_lift_res is None:
+        lifted_node = rv_node
     else:
-        raise TypeError(
-            "Component distributions must be PyMC3 Distributions. "
-            "Got {}".format(type(x))
+        _, lifted_rv = size_lift_res
+        lifted_node = lifted_rv.owner
+
+    rng, size, dtype, *dist_params = lifted_node.inputs
+
+    new_dist_params = [at.broadcast_to(param, bcast_shape) for param in dist_params]
+    bcasted_node = lifted_node.op.make_node(rng, size, dtype, *new_dist_params)
+
+    if aesara.config.compute_test_value != "off":
+        compute_test_value(bcasted_node)
+
+    return [bcasted_node.outputs[1]]
+
+
+def rv_pull_down(x: TensorVariable, dont_touch_vars=None) -> TensorVariable:
+    """Pull a ``RandomVariable`` ``Op`` down through a graph, when possible."""
+    if dont_touch_vars is None:
+        dont_touch_vars = []
+
+    fgraph = FunctionGraph(outputs=dont_touch_vars, clone=False)
+
+    return pre_greedy_local_optimizer(
+        fgraph,
+        [
+            local_dimshuffle_rv_lift,
+            local_subtensor_rv_lift,
+            naive_bcast_rv_lift,
+        ],
+        x,
+    )
+
+
+def non_constant(x):
+    x = at.as_tensor_variable(x)
+    if isinstance(x, Constant):
+        # XXX: This isn't good for `size` parameters, because it could result
+        # in `at.get_vector_length` exceptions.
+        res = x.type()
+        res.tag = copy(res.tag)
+        if aesara.config.compute_test_value != "off":
+            res.tag.test_value = x.data
+        res.name = x.name
+        return res
+    else:
+        return x
+
+
+class SwitchingProcessFactory(OpFromGraph):
+    default_output = 1
+    # FIXME: This is just to appease `random_make_inplace`
+    inplace = True
+
+    def make_node(self, *inputs):
+        # Make the `make_node` signature consistent with the node inputs
+        # TODO: This is a hack; make it less so.
+        num_expected_inps = len(self.local_inputs) - len(self.shared_inputs)
+        if len(inputs) > num_expected_inps:
+            inputs = inputs[:num_expected_inps]
+        return super().make_node(*inputs)
+
+
+# Allow `SwitchingProcessFactory`s to be typed as `RandomVariable`s
+RandomVariable.register(SwitchingProcessFactory)
+
+
+def create_switching_process_op(size, states, comp_rvs, output_shape=None):
+    # We use `make_vector` to preserve the known/fixed-length of our
+    # `size` parameter.  If we made this a simple `at.vector`, some
+    # shape-related steps in `RandomVariable` would unnecessarily fail.
+    size_param = make_vector(
+        *[non_constant(size[i]) for i in range(at.get_vector_length(size))]
+    )
+    size_param.name = "size"
+
+    # We need to make a copy of the state sequence, because we don't want
+    # or need anything above this part of the graph.
+    states_param = states.type()
+    states_param.name = states.name
+
+    # TODO: We should create shallow copies of the component distributions, as
+    # well.  In other words, the inputs to the `Op` we're constructing should
+    # be the inputs to these component distributions.
+    comp_rv_params = [non_constant(rv) for rv in comp_rvs]
+
+    dtype = upcast(*[rv.type.dtype for rv in comp_rv_params])
+    comp_ndim_supp = comp_rv_params[0].owner.op.ndim_supp
+
+    resized_states_param = at.broadcast_to(
+        states_param, tuple(size_param) + tuple(states_param.shape)
+    )
+
+    def resize_rv(x, size):
+        if at.get_vector_length(size):
+            return change_rv_size(x, size, expand=True)
+        else:
+            return x
+
+    resized_comp_rvs = [
+        # XXX: This will create new component distributions that are
+        # disconnected from the originals!  In other words,
+        # any reference to the old ones will be invalidated.
+        resize_rv(
+            rv_pull_down(at.atleast_1d(comp_rv), comp_rv.owner.inputs), size_param
         )
+        for comp_rv in comp_rv_params
+    ]
+
+    bcast_states, *bcast_comp_rvs = broadcast_params(
+        (resized_states_param,) + tuple(resized_comp_rvs),
+        (0,) + (comp_ndim_supp,) * len(resized_comp_rvs),
+    )
+
+    if output_shape is not None:
+        if comp_ndim_supp > 0 and at.get_vector_length(output_shape) > comp_ndim_supp:
+            bcast_states = at.broadcast_to(
+                bcast_states, tuple(output_shape[:-comp_ndim_supp])
+            )
+        bcast_comp_rvs = [at.broadcast_to(rv, output_shape) for rv in bcast_comp_rvs]
+    else:
+        output_shape = bcast_comp_rvs[0].shape
+
+    assert at.get_vector_length(output_shape) > 0
+
+    res = at.empty(output_shape, dtype=dtype)
+
+    for i, bcasted_comp_rv in enumerate(bcast_comp_rvs):
+        i_idx = at.nonzero(at.eq(bcast_states, i))
+        indexed_comp_rv = bcasted_comp_rv[i_idx]
+
+        lifted_comp_rv = rv_pull_down(indexed_comp_rv, bcasted_comp_rv.owner.inputs)
+
+        res = at.set_subtensor(res[i_idx], lifted_comp_rv)
+
+    new_op = SwitchingProcessFactory(
+        # The first and third parameters are simply placeholders so that the
+        # arguments signature matches `RandomVariable`'s
+        [at.iscalar(), size_param, at.iscalar(), states_param] + list(comp_rv_params),
+        [NoneConst, res],
+        inline=True,
+        on_unused_input="ignore",
+    )
+
+    # Add `RandomVariable`-like "metadata"
+    new_op.ndim_supp = comp_ndim_supp + 1
+    new_op.ndims_params = (1,) + tuple(comp.ndim for comp in comp_rv_params)
+
+    return new_op
 
 
 class SwitchingProcess(pm.Distribution):
@@ -112,149 +217,94 @@ class SwitchingProcess(pm.Distribution):
 
     """  # noqa: E501
 
-    def __init__(self, comp_dists, states, *args, **kwargs):
-        """Initialize a `SwitchingProcess` instance.
+    def __new__(cls, *args, **kwargs):
+        obs = kwargs.get("observed", None)
 
-        Each `Distribution` object in `comp_dists` must have a
-        `Distribution.random_subset` method that takes a list of indices and
-        returns a sample for only that subset.  Unfortunately, since PyMC3
-        doesn't provide such a method, you'll have to implement it yourself and
-        monkey patch a `Distribution` class.
+        if obs is not None:
+            # XXX: This is a nasty hack to allow the "size changes" PyMC3
+            # performs on observed `RandomVariable`s.
+            kwargs["out_shape"] = tuple(obs.shape)
+
+        return super().__new__(cls, *args, **kwargs)
+
+    @classmethod
+    def dist(
+        cls,
+        comp_rvs: Sequence[TensorVariable],
+        states: TensorVariable,
+        *args,
+        size=None,
+        out_shape=None,
+        rng=None,
+        **kwargs
+    ):
+        """Initialize a `SwitchingProcess` instance.
 
         Parameters
         ----------
-        comp_dists : list of Distribution
-            A list containing `Distribution` objects for each mixture component.
-            These are essentially the emissions distributions.
-        states : DiscreteMarkovChain
+        comp_rvs:
+            A list containing `RandomVariable` objects for each mixture component.
+        states:
             The hidden state sequence.  It should have a number of states
             equal to the size of `comp_dists`.
 
         """
-        self.states = at.as_tensor_variable(pm.intX(states))
 
-        if len(comp_dists) > 31:
-            warnings.warn(
-                "There are too many mixture distributions to properly"
-                " determine their combined shape."
-            )
+        size = normalize_size_param(size)
 
-        self.comp_dists = comp_dists
+        out_shape = kwargs.pop("out_shape", None)
 
-        states_tv = get_test_value(self.states)
-        bcast_comps = np.broadcast(
-            states_tv, *[get_and_check_comp_value(x) for x in comp_dists[:31]]
+        states = at.as_tensor(states)
+
+        new_comp_rvs = []
+        for rv in comp_rvs:
+            new_rv = at.as_tensor(rv)
+            new_rv.tag.value_var = new_rv.type()
+            new_comp_rvs.append(new_rv)
+
+        # TODO: Make sure `comp_rvs` are not in the/a model.
+        # This will help reduce any rewrite inconsistencies.
+        SwitchingProcessOp = create_switching_process_op(
+            size,
+            states,
+            new_comp_rvs,
+            output_shape=out_shape,
         )
-        shape = bcast_comps.shape
 
-        defaults = kwargs.pop("defaults", [])
+        rv_var = SwitchingProcessOp(*([0, size, 0, states] + list(new_comp_rvs)))
 
-        out_dtype = upcast(*[x.type.dtype for x in comp_dists])
-        dtype = kwargs.pop("dtype", out_dtype)
+        testval = kwargs.pop("testval", None)
 
-        if not all_discrete(comp_dists):
-            try:
-                bcast_means = tt_broadcast_arrays(
-                    *([self.states] + [d.mean.astype(dtype) for d in self.comp_dists])
-                )
-                self.mean = at.choose(self.states, bcast_means[1:])
+        if testval is not None:
+            rv_var.tag.test_value = testval
 
-                if "mean" not in defaults:
-                    defaults.append("mean")
+        return rv_var
 
-            except (AttributeError, ValueError, IndexError):  # pragma: no cover
-                pass
 
-        try:
-            bcast_modes = tt_broadcast_arrays(
-                *([self.states] + [d.mode.astype(dtype) for d in self.comp_dists])
-            )
-            self.mode = at.choose(self.states, bcast_modes[1:])
+@_logp.register(SwitchingProcessFactory)
+def switching_process_logp(op, var, rvs_to_values, *dist_params, **kwargs):
+    obs = rvs_to_values.get(var, var)
+    states, *comp_rvs = dist_params[: len(op.inputs[3:])]
 
-            if "mode" not in defaults:
-                defaults.append("mode")
+    obs_tt = at.as_tensor_variable(obs)
 
-        except (AttributeError, ValueError, IndexError):  # pragma: no cover
-            pass
+    logp_val = at.alloc(-np.inf, *tuple(obs_tt.shape))
 
-        super().__init__(shape=shape, dtype=dtype, defaults=defaults, **kwargs)
+    for i, comp_rv in enumerate(comp_rvs):
+        i_idx = at.nonzero(at.eq(states, i))
+        obs_i = obs_tt[i_idx]
 
-    def logp(self, obs):
-        """Return the scalar Theano log-likelihood at a point."""
+        bcasted_comp_rv = at.broadcast_to(comp_rv, obs_tt.shape)
+        indexed_comp_rv = bcasted_comp_rv[i_idx]
 
-        obs_tt = at.as_tensor_variable(obs)
+        lifted_comp_rv = rv_pull_down(indexed_comp_rv, comp_rv.owner.inputs)
 
-        logp_val = at.alloc(-np.inf, *obs.shape)
+        logp_val = at.set_subtensor(logp_val[i_idx], logpt(lifted_comp_rv, obs_i))
 
-        for i, dist in enumerate(self.comp_dists):
-            i_mask = at.eq(self.states, i)
-            obs_i = obs_tt[i_mask]
-            subset_dist = dist.dist(*distribution_subset_args(dist, obs.shape, i_mask))
-            logp_val = at.set_subtensor(logp_val[i_mask], subset_dist.logp(obs_i))
+    if kwargs.get("sum", False):
+        logp_val = logp_val.sum()
 
-        return logp_val
-
-    def random(self, point=None, size=None):
-        """Sample from this distribution conditional on a given set of values.
-
-        Parameters
-        ----------
-        point: dict, optional
-            Dict of variable values on which random values are to be
-            conditioned (uses default point if not specified).
-        size: int, optional
-            Desired size of random sample (returns one sample if not
-            specified).
-
-        Returns
-        -------
-        array
-        """
-        with _DrawValuesContext():
-            (states,) = draw_values([self.states], point=point, size=size)
-
-        # This is a terrible thing to have to do here, but it's better than
-        # having to (know to) update `Distribution.shape` when/if dimensions
-        # change (e.g. when sampling new state sequences).
-        bcast_comps = np.broadcast(
-            states, *[dist.random(point=point) for dist in self.comp_dists]
-        )
-        self_shape = bcast_comps.shape
-
-        if size:
-            # `draw_values` will not honor the `size` parameter if its arguments
-            # don't contain random variables, so, when our `self.states` are
-            # constants, we have to broadcast `states` so that it matches `size +
-            # self.shape`.
-            expanded_states = np.broadcast_to(
-                states, tuple(np.atleast_1d(size)) + self_shape
-            )
-        else:
-            expanded_states = np.broadcast_to(states, self_shape)
-
-        samples = np.empty(expanded_states.shape)
-
-        for i, dist in enumerate(self.comp_dists):
-            # We want to sample from only the parts of our component
-            # distributions that are active given the states.
-            # This is only really relevant when the component distributions
-            # change over the state space (e.g. Poisson means that change
-            # over time).
-            # We could always sample such components over the entire space
-            # (e.g. time), but, for spaces with large dimension, that would
-            # be extremely costly and wasteful.
-            i_idx = np.where(expanded_states == i)
-            i_size = len(i_idx[0])
-            if i_size > 0:
-                subset_args = distribution_subset_args(
-                    dist, expanded_states.shape, i_idx, point=point
-                )
-                state_dist = dist.dist(*subset_args)
-
-                sample = state_dist.random(point=point)
-                samples[i_idx] = sample
-
-        return samples
+    return logp_val
 
 
 class PoissonZeroProcess(SwitchingProcess):
@@ -264,7 +314,8 @@ class PoissonZeroProcess(SwitchingProcess):
     the second mixture component is the Poisson random variable.
     """
 
-    def __init__(self, mu=None, states=None, **kwargs):
+    @classmethod
+    def dist(cls, mu=None, states=None, rng=None, **kwargs):
         """Initialize a `PoissonZeroProcess` object.
 
         Parameters
@@ -275,13 +326,93 @@ class PoissonZeroProcess(SwitchingProcess):
             A vector of integer 0-1 states that indicate which component of
             the mixture is active at each point/time.
         """
-        self.mu = at.as_tensor_variable(pm.floatX(mu))
-        self.states = at.as_tensor_variable(states)
+        mu = at.as_tensor_variable(mu)
+        states = at.as_tensor_variable(states)
 
-        super().__init__([pm.Constant.dist(0), pm.Poisson.dist(mu)], states, **kwargs)
+        # NOTE: This creates distributions that are *not* part of a `Model`
+        return super().dist(
+            [pm.Constant.dist(0), pm.Poisson.dist(mu, rng=rng)],
+            states,
+            rng=rng,
+            **kwargs
+        )
 
 
-class DiscreteMarkovChain(pm.Discrete):
+class DiscreteMarkovChainFactory(OpFromGraph):
+    # Add `RandomVariable`-like "metadata"
+    ndim_supp = 1
+    ndims_params = (3, 1)
+    default_output = 1
+    # FIXME: This is just to appease `random_make_inplace`
+    inplace = True
+
+
+# Allow `DiscreteMarkovChainFactory`s to be typed as `RandomVariable`s
+RandomVariable.register(DiscreteMarkovChainFactory)
+
+
+def create_discrete_mc_op(rng, size, Gammas, gamma_0):
+
+    # Again, we need to preserve the length of this symbolic vector, so we do
+    # this.
+    size_param = make_vector(
+        *[non_constant(size[i]) for i in range(at.get_vector_length(size))]
+    )
+    size_param.name = "size"
+
+    # We make shallow copies so that unwanted ancestors don't appear in the
+    # graph.
+    Gammas_param = non_constant(Gammas).type()
+    Gammas_param.name = "Gammas_param"
+
+    gamma_0_param = non_constant(gamma_0).type()
+    gamma_0_param.name = "gamma_0_param"
+
+    bcast_Gammas_param, bcast_gamma_0_param = broadcast_params(
+        (Gammas_param, gamma_0_param), (3, 1)
+    )
+
+    # Sample state 0 in each state sequence
+    state_0 = categorical(
+        bcast_gamma_0_param,
+        size=tuple(size_param) + tuple(bcast_gamma_0_param.shape[:-1]),
+        # size=at.join(0, size_param, bcast_gamma_0_param.shape[:-1]),
+        rng=rng,
+    )
+
+    N = bcast_Gammas_param.shape[-3]
+    states_shape = tuple(state_0.shape) + (N,)
+
+    bcast_Gammas_param = at.broadcast_to(
+        bcast_Gammas_param, states_shape + tuple(bcast_Gammas_param.shape[-2:])
+    )
+
+    def loop_fn(n, state_nm1, Gammas_inner, rng):
+        gamma_t = Gammas_inner[..., n, :, :]
+        idx = tuple(at.ogrid[[slice(None, d) for d in tuple(state_0.shape)]]) + (
+            state_nm1.T,
+        )
+        gamma_t = gamma_t[idx]
+        state_n = categorical(gamma_t, rng=rng)
+        return state_n.T
+
+    res, _ = aesara.scan(
+        loop_fn,
+        outputs_info=[{"initial": state_0.T, "taps": [-1]}],
+        sequences=[at.arange(N)],
+        non_sequences=[bcast_Gammas_param, rng],
+        # strict=True,
+    )
+
+    return DiscreteMarkovChainFactory(
+        [at.iscalar(), size_param, at.iscalar(), Gammas_param, gamma_0_param],
+        [rng, res.T],
+        inline=False,
+        on_unused_input="ignore",
+    )
+
+
+class DiscreteMarkovChain(pm.Distribution):
     """A first-order discrete Markov chain distribution.
 
     This class characterizes vector random variables consisting of state
@@ -290,7 +421,8 @@ class DiscreteMarkovChain(pm.Discrete):
 
     """
 
-    def __init__(self, Gammas, gamma_0, shape, **kwargs):
+    @classmethod
+    def dist(cls, Gammas, gamma_0, size=None, rng=None, **kwargs):
         """Initialize an `DiscreteMarkovChain` object.
 
         Parameters
@@ -304,145 +436,106 @@ class DiscreteMarkovChain(pm.Discrete):
         gamma_0: TensorVariable
             The initial state probabilities.  The last dimension should be length `M`,
             i.e. the number of distinct states.
-        shape: tuple of int
-            Shape of the state sequence.  The last dimension is `N`, i.e. the
-            length of the state sequence(s).
         """
-        self.gamma_0 = at.as_tensor_variable(pm.floatX(gamma_0))
+        gamma_0 = at.as_tensor_variable(pm.floatX(gamma_0))
 
         assert Gammas.ndim >= 3
 
-        self.Gammas = at.as_tensor_variable(pm.floatX(Gammas))
+        Gammas = at.as_tensor_variable(pm.floatX(Gammas))
 
-        shape = np.atleast_1d(shape)
+        size = normalize_size_param(size)
 
-        dtype = _conversion_map[aesara.config.floatX]
-        self.mode = np.zeros(tuple(shape), dtype=dtype)
+        if rng is None:
+            rng = aesara.shared(np.random.RandomState(), borrow=True)
 
-        super().__init__(shape=shape, **kwargs)
+        # rv_var = create_discrete_mc_op(size, Gammas, gamma_0)
+        DiscreteMarkovChainOp = create_discrete_mc_op(rng, size, Gammas, gamma_0)
+        rv_var = DiscreteMarkovChainOp(0, size, 0, Gammas, gamma_0)
 
-    def logp(self, states):
-        r"""Create a Theano graph that computes the log-likelihood for a discrete Markov chain.
+        testval = kwargs.pop("testval", None)
 
-        This is the log-likelihood for the joint distribution of states, :math:`S_t`, conditional
-        on state samples, :math:`s_t`, given by the following:
+        if testval is not None:
+            rv_var.tag.test_value = testval
 
-        .. math::
+        return rv_var
 
-            \int_{S_0} P(S_1 = s_1 \mid S_0) dP(S_0) \prod^{T}_{t=2} P(S_t = s_t \mid S_{t-1} = s_{t-1})
 
-        The first term (i.e. the integral) simply computes the marginal :math:`P(S_1 = s_1)`, so
-        another way to express this result is as follows:
+@_logp.register(DiscreteMarkovChainFactory)
+def discrete_mc_logp(op, var, rvs_to_values, *dist_params, **kwargs):
+    r"""Create a Aesara graph that computes the log-likelihood for a discrete Markov chain.
 
-        .. math::
+    This is the log-likelihood for the joint distribution of states, :math:`S_t`, conditional
+    on state samples, :math:`s_t`, given by the following:
 
-            P(S_1 = s_1) \prod^{T}_{t=2} P(S_t = s_t \mid S_{t-1} = s_{t-1})
+    .. math::
 
-        """  # noqa: E501
+        \int_{S_0} P(S_1 = s_1 \mid S_0) dP(S_0) \prod^{T}_{t=2} P(S_t = s_t \mid S_{t-1} = s_{t-1})
 
-        Gammas = at.shape_padleft(self.Gammas, states.ndim - (self.Gammas.ndim - 2))
+    The first term (i.e. the integral) simply computes the marginal :math:`P(S_1 = s_1)`, so
+    another way to express this result is as follows:
 
-        # Multiply the initial state probabilities by the first transition
-        # matrix by to get the marginal probability for state `S_1`.
-        # The integral that produces the marginal is essentially
-        # `gamma_0.dot(Gammas[0])`
-        Gamma_1 = Gammas[..., 0:1, :, :]
-        gamma_0 = tt_expand_dims(self.gamma_0, (-3, -1))
-        P_S_1 = at.sum(gamma_0 * Gamma_1, axis=-2)
+    .. math::
 
-        # The `tt.switch`s allow us to broadcast the indexing operation when
-        # the replication dimensions of `states` and `Gammas` don't match
-        # (e.g. `states.shape[0] > Gammas.shape[0]`)
-        S_1_slices = tuple(
-            slice(
-                at.switch(at.eq(P_S_1.shape[i], 1), 0, 0),
-                at.switch(at.eq(P_S_1.shape[i], 1), 1, d),
-            )
-            for i, d in enumerate(states.shape)
+        P(S_1 = s_1) \prod^{T}_{t=2} P(S_t = s_t \mid S_{t-1} = s_{t-1})
+
+    """  # noqa: E501
+
+    states = rvs_to_values.get(var, var)
+    Gammas, gamma_0 = dist_params[: len(op.inputs[3:])]
+
+    Gammas = at.shape_padleft(Gammas, states.ndim - (Gammas.ndim - 2))
+
+    # Multiply the initial state probabilities by the first transition
+    # matrix by to get the marginal probability for state `S_1`.
+    # The integral that produces the marginal is essentially
+    # `gamma_0.dot(Gammas[0])`
+    Gamma_1 = Gammas[..., 0:1, :, :]
+    gamma_0 = at.expand_dims(gamma_0, (-3, -1))
+    P_S_1 = at.sum(gamma_0 * Gamma_1, axis=-2)
+
+    # The `tt.switch`s allow us to broadcast the indexing operation when
+    # the replication dimensions of `states` and `Gammas` don't match
+    # (e.g. `states.shape[0] > Gammas.shape[0]`)
+    S_1_slices = tuple(
+        slice(
+            at.switch(at.eq(P_S_1.shape[i], 1), 0, 0),
+            at.switch(at.eq(P_S_1.shape[i], 1), 1, d),
         )
-        S_1_slices = (tuple(at.ogrid[S_1_slices]) if S_1_slices else tuple()) + (
-            states[..., 0:1],
+        for i, d in enumerate(states.shape)
+    )
+    S_1_slices = (tuple(at.ogrid[S_1_slices]) if S_1_slices else tuple()) + (
+        states[..., 0:1],
+    )
+    logp_S_1 = at.log(P_S_1[S_1_slices]).sum(axis=-1)
+
+    # These are slices for the extra dimensions--including the state
+    # sequence dimension (e.g. "time")--along which which we need to index
+    # the transition matrix rows using the "observed" `states`.
+    trans_slices = tuple(
+        slice(
+            at.switch(at.eq(Gammas.shape[i], 1), 0, 1 if i == states.ndim - 1 else 0),
+            at.switch(at.eq(Gammas.shape[i], 1), 1, d),
         )
-        logp_S_1 = at.log(P_S_1[S_1_slices]).sum(axis=-1)
+        for i, d in enumerate(states.shape)
+    )
+    trans_slices = (tuple(at.ogrid[trans_slices]) if trans_slices else tuple()) + (
+        states[..., :-1],
+    )
 
-        # These are slices for the extra dimensions--including the state
-        # sequence dimension (e.g. "time")--along which which we need to index
-        # the transition matrix rows using the "observed" `states`.
-        trans_slices = tuple(
-            slice(
-                at.switch(
-                    at.eq(Gammas.shape[i], 1), 0, 1 if i == states.ndim - 1 else 0
-                ),
-                at.switch(at.eq(Gammas.shape[i], 1), 1, d),
-            )
-            for i, d in enumerate(states.shape)
-        )
-        trans_slices = (tuple(at.ogrid[trans_slices]) if trans_slices else tuple()) + (
-            states[..., :-1],
-        )
+    # Select the transition matrix row of each observed state; this yields
+    # `P(S_t | S_{t-1} = s_{t-1})`
+    P_S_2T = Gammas[trans_slices]
 
-        # Select the transition matrix row of each observed state; this yields
-        # `P(S_t | S_{t-1} = s_{t-1})`
-        P_S_2T = Gammas[trans_slices]
+    obs_slices = tuple(slice(None, d) for d in P_S_2T.shape[:-1])
+    obs_slices = (tuple(at.ogrid[obs_slices]) if obs_slices else tuple()) + (
+        states[..., 1:],
+    )
+    logp_S_1T = at.log(P_S_2T[obs_slices])
 
-        obs_slices = tuple(slice(None, d) for d in P_S_2T.shape[:-1])
-        obs_slices = (tuple(at.ogrid[obs_slices]) if obs_slices else tuple()) + (
-            states[..., 1:],
-        )
-        logp_S_1T = at.log(P_S_2T[obs_slices])
+    res = logp_S_1 + at.sum(logp_S_1T, axis=-1)
+    res.name = "DiscreteMarkovChain_logp"
 
-        res = logp_S_1 + at.sum(logp_S_1T, axis=-1)
-        res.name = "DiscreteMarkovChain_logp"
+    if kwargs.get("sum", False):
+        res = res.sum()
 
-        return res
-
-    def random(self, point=None, size=None):
-        """Sample from a discrete Markov chain conditional on a given set of values.
-
-        Parameters
-        ----------
-        point: dict, optional
-            Dict of variable values on which random values are to be
-            conditioned (uses default point if not specified).
-        size: int, optional
-            Desired size of random sample (returns one sample if not
-            specified).
-
-        Returns
-        -------
-        array
-        """
-        terms = [self.gamma_0, self.Gammas]
-
-        with _DrawValuesContext():
-            gamma_0, Gamma = draw_values(terms, point=point)
-
-        # Sample state 0 in each state sequence
-        state_n = pm.Categorical.dist(gamma_0, shape=self.shape[:-1]).random(
-            point=point, size=size
-        )
-        state_shape = state_n.shape
-
-        N = self.shape[-1]
-
-        states = np.empty(state_shape + (N,), dtype=self.dtype)
-
-        unif_samples = np.random.uniform(size=states.shape)
-
-        # Make sure we have a transition matrix for each element in a state
-        # sequence
-        Gamma = np.broadcast_to(Gamma, tuple(states.shape) + Gamma.shape[-2:])
-
-        # Slices across each independent/replication dimension
-        slices_tuple = tuple(np.ogrid[[slice(None, d) for d in state_shape]])
-
-        for n in range(0, N):
-            gamma_t = Gamma[..., n, :, :]
-            gamma_t = gamma_t[slices_tuple + (state_n,)]
-            state_n = vsearchsorted(gamma_t.cumsum(axis=-1), unif_samples[..., n])
-            states[..., n] = state_n
-
-        return states
-
-    def _distr_parameters_for_repr(self):
-        return ["Gammas", "gamma_0"]
+    return res

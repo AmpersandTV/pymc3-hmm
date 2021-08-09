@@ -1,24 +1,13 @@
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+import aesara.tensor as at
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import scipy.special as sp
 from matplotlib import cm
 from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
-from scipy.special import logsumexp
-
-try:  # pragma: no cover
-    import aesara.tensor as at
-    from aesara.tensor.extra_ops import broadcast_shape
-    from aesara.tensor.extra_ops import broadcast_to as at_broadcast_to
-    from aesara.tensor.var import TensorVariable
-except ImportError:  # pragma: no cover
-    import theano.tensor as at
-    from theano.tensor.extra_ops import broadcast_shape
-    from theano.tensor.extra_ops import broadcast_to as at_broadcast_to
-    from theano.tensor.var import TensorVariable
-
 
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[int], signature="(n),()->()")
 
@@ -87,7 +76,7 @@ def compute_trans_freqs(states, N_states, counts_only=False):
     return res
 
 
-def tt_logsumexp(x, axis=None, keepdims=False):
+def logsumexp(x, axis=None, keepdims=False):
     """Construct a Theano graph for a log-sum-exp calculation."""
     x_max_ = at.max(x, axis=axis, keepdims=True)
 
@@ -114,7 +103,7 @@ def tt_logsumexp(x, axis=None, keepdims=False):
     return res + x_max_
 
 
-def tt_logdotexp(A, b):
+def logdotexp(A, b):
     """Construct a Theano graph for a numerically stable log-scale dot product.
 
     The result is more or less equivalent to `tt.log(tt.exp(A).dot(tt.exp(b)))`
@@ -131,11 +120,11 @@ def tt_logdotexp(A, b):
         sqz = True
 
     b_bcast = b.dimshuffle(shape_b)
-    res = tt_logsumexp(A_bcast + b_bcast, axis=1)
+    res = logsumexp(A_bcast + b_bcast, axis=1)
     return res.squeeze() if sqz else res
 
 
-def logdotexp(A, b):
+def np_logdotexp(A, b):
     """Compute a numerically stable log-scale dot product of NumPy values.
 
     The result is more or less equivalent to `np.log(np.exp(A).dot(np.exp(b)))`
@@ -149,7 +138,7 @@ def logdotexp(A, b):
 
     A_bcast = np.expand_dims(A, -1)
 
-    res = logsumexp(A_bcast + b_bcast, axis=1)
+    res = sp.logsumexp(A_bcast + b_bcast, axis=1)
     return res.squeeze() if sqz else res
 
 
@@ -177,19 +166,6 @@ def tt_expand_dims(x, dims):
     return x.dimshuffle(dim_range)
 
 
-def tt_broadcast_arrays(*args: TensorVariable):
-    """Broadcast any number of arrays against each other.
-
-    Parameters
-    ----------
-    `*args` : array_likes
-        The arrays to broadcast.
-
-    """
-    bcast_shape = broadcast_shape(*args)
-    return tuple(at_broadcast_to(a, bcast_shape) for a in args)
-
-
 def multilogit_inv(ys):
     """Compute the multilogit-inverse function for both NumPy and Theano arrays.
 
@@ -208,10 +184,10 @@ def multilogit_inv(ys):
     """
     if isinstance(ys, np.ndarray):
         lib = np
-        lib_logsumexp = logsumexp
+        lib_logsumexp = sp.logsumexp
     else:
         lib = at
-        lib_logsumexp = tt_logsumexp
+        lib_logsumexp = logsumexp
 
     # exp_ys = lib.exp(ys)
     # res = lib.concatenate([exp_ys, lib.ones(tuple(ys.shape)[:-1] + (1,))], axis=-1)
