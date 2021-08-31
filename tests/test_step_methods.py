@@ -18,16 +18,14 @@ from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep, ffbs_step
 from pymc3_hmm.utils import compute_steady_state, compute_trans_freqs
 from tests.utils import simulate_poiszero_hmm
 
-
-@pytest.fixture()
-def raise_under_overflow():
-    with np.errstate(over="raise", under="raise"):
-        yield
-
+# @pytest.fixture()
+# def raise_under_overflow():
+#     with np.errstate(over="raise", under="raise"):
+#         yield
 
 # All tests in this module will raise on over- and under-flows (unless local
 # settings dictate otherwise)
-pytestmark = pytest.mark.usefixtures("raise_under_overflow")
+# pytestmark = pytest.mark.usefixtures("raise_under_overflow")
 
 
 def test_ffbs_step():
