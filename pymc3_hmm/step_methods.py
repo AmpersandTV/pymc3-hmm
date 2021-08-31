@@ -136,7 +136,7 @@ def ffbs_step(
 
     # Backward sampling
     for n in range(N - 2, -1, -1):
-        np.multiply(alphas[..., n], Gamma[n, :, state_np1], out=beta_n)
+        np.multiply(alphas[..., n], Gamma[n + 1, :, state_np1], out=beta_n)
         beta_n /= np.sum(beta_n)
 
         state_np1 = np.searchsorted(beta_n.cumsum(), unif_samples[n])
