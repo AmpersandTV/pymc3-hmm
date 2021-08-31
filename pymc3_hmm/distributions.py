@@ -26,7 +26,7 @@ from pymc3.distributions.distribution import (
 )
 from pymc3.distributions.mixture import _conversion_map, all_discrete
 
-from pymc3_hmm.utils import tt_broadcast_arrays, tt_expand_dims, vsearchsorted
+from pymc3_hmm.utils import tt_broadcast_arrays, vsearchsorted
 
 
 def distribution_subset_args(dist, shape, idx, point=None):
@@ -185,7 +185,7 @@ class SwitchingProcess(Distribution):
         super().__init__(shape=shape, dtype=dtype, defaults=defaults, **kwargs)
 
     def logp(self, obs):
-        """Return the scalar Theano log-likelihood at a point."""
+        """Return the Theano log-likelihood at a point."""
 
         obs_tt = at.as_tensor_variable(obs)
 
@@ -349,59 +349,40 @@ class DiscreteMarkovChain(pm.Discrete):
 
         """  # noqa: E501
 
-        Gammas = at.shape_padleft(self.Gammas, states.ndim - (self.Gammas.ndim - 2))
+        states_tt = at.as_tensor(states)
 
-        # Multiply the initial state probabilities by the first transition
-        # matrix by to get the marginal probability for state `S_1`.
-        # The integral that produces the marginal is essentially
-        # `gamma_0.dot(Gammas[0])`
-        Gamma_1 = Gammas[..., 0:1, :, :]
-        gamma_0 = tt_expand_dims(self.gamma_0, (-3, -1))
-        P_S_1 = at.sum(gamma_0 * Gamma_1, axis=-2)
+        if states.ndim > 1 or self.Gammas.ndim > 3 or self.gamma_0.ndim > 1:
+            raise NotImplementedError("Broadcasting not supported.")
 
-        # The `tt.switch`s allow us to broadcast the indexing operation when
-        # the replication dimensions of `states` and `Gammas` don't match
-        # (e.g. `states.shape[0] > Gammas.shape[0]`)
-        S_1_slices = tuple(
-            slice(
-                at.switch(at.eq(P_S_1.shape[i], 1), 0, 0),
-                at.switch(at.eq(P_S_1.shape[i], 1), 1, d),
-            )
-            for i, d in enumerate(states.shape)
+        Gammas_tt = at_broadcast_to(
+            self.Gammas, (states.shape[0],) + tuple(self.Gammas.shape)[-2:]
         )
-        S_1_slices = (tuple(at.ogrid[S_1_slices]) if S_1_slices else tuple()) + (
-            states[..., 0:1],
-        )
-        logp_S_1 = at.log(P_S_1[S_1_slices]).sum(axis=-1)
+        gamma_0_tt = self.gamma_0
 
-        # These are slices for the extra dimensions--including the state
-        # sequence dimension (e.g. "time")--along which which we need to index
-        # the transition matrix rows using the "observed" `states`.
-        trans_slices = tuple(
-            slice(
-                at.switch(
-                    at.eq(Gammas.shape[i], 1), 0, 1 if i == states.ndim - 1 else 0
-                ),
-                at.switch(at.eq(Gammas.shape[i], 1), 1, d),
-            )
-            for i, d in enumerate(states.shape)
-        )
-        trans_slices = (tuple(at.ogrid[trans_slices]) if trans_slices else tuple()) + (
-            states[..., :-1],
+        Gamma_1_tt = Gammas_tt[0]
+        P_S_1_tt = at.dot(gamma_0_tt, Gamma_1_tt)[states_tt[0]]
+
+        # def S_logp_fn(S_tm1, S_t, Gamma):
+        #     return at.log(Gamma[..., S_tm1, S_t])
+        #
+        # P_S_2T_tt, _ = aesara.scan(
+        #     S_logp_fn,
+        #     sequences=[
+        #         {
+        #             "input": states_tt,
+        #             "taps": [-1, 0],
+        #         },
+        #         Gammas_tt,
+        #     ],
+        # )
+        P_S_2T_tt = Gammas_tt[at.arange(1, states.shape[0]), states[:-1], states[1:]]
+
+        log_P_S_1T_tt = at.concatenate(
+            [at.shape_padright(at.log(P_S_1_tt)), at.log(P_S_2T_tt)]
         )
 
-        # Select the transition matrix row of each observed state; this yields
-        # `P(S_t | S_{t-1} = s_{t-1})`
-        P_S_2T = Gammas[trans_slices]
-
-        obs_slices = tuple(slice(None, d) for d in P_S_2T.shape[:-1])
-        obs_slices = (tuple(at.ogrid[obs_slices]) if obs_slices else tuple()) + (
-            states[..., 1:],
-        )
-        logp_S_1T = at.log(P_S_2T[obs_slices])
-
-        res = logp_S_1 + at.sum(logp_S_1T, axis=-1)
-        res.name = "DiscreteMarkovChain_logp"
+        res = log_P_S_1T_tt.sum()
+        res.name = "states_logp"
 
         return res
 

@@ -208,164 +208,160 @@ def test_DiscreteMarkovChain_point():
         )
 
 
-def test_DiscreteMarkovChain_logp():
+@pytest.mark.parametrize(
+    "Gammas, gamma_0, obs, exp_res",
+    [
+        # A single transition matrix and initial probabilities vector for each
+        # element in the state sequence
+        (
+            np.array([[[0.0, 1.0], [1.0, 0.0]]]),
+            np.r_[1.0, 0.0],
+            np.r_[1, 0, 1, 0],
+            # 0
+            None,
+        ),
+        # "Time"-varying transition matrices with a single vector of initial
+        # probabilities
+        (
+            np.stack(
+                [
+                    np.array([[0.0, 1.0], [1.0, 0.0]]),
+                    np.array([[0.0, 1.0], [1.0, 0.0]]),
+                    np.array([[0.0, 1.0], [1.0, 0.0]]),
+                    np.array([[0.0, 1.0], [1.0, 0.0]]),
+                ],
+                axis=0,
+            ),
+            np.r_[1.0, 0.0],
+            np.r_[1, 0, 1, 0],
+            # 0,
+            None,
+        ),
+        # Static transition matrix and two state sequences
+        pytest.param(
+            np.array([[[0.0, 1.0], [1.0, 0.0]]]),
+            np.r_[0.5, 0.5],
+            np.array([[1, 0, 1, 0], [0, 1, 0, 1]]),
+            # np.array([1, 1, 1, 1]),
+            None,
+            marks=pytest.mark.xfail(reason=("Broadcasting for logp not supported")),
+        ),
+        # Time-varying transition matrices and two state sequences
+        pytest.param(
+            np.stack(
+                [
+                    np.array([[0.0, 1.0], [1.0, 0.0]]),
+                    np.array([[0.0, 1.0], [1.0, 0.0]]),
+                    np.array([[0.0, 1.0], [1.0, 0.0]]),
+                    np.array([[0.0, 1.0], [1.0, 0.0]]),
+                ],
+                axis=0,
+            ),
+            np.r_[0.5, 0.5],
+            np.array([[1, 0, 1, 0], [0, 1, 0, 1]]),
+            # np.array([1, 1, 1, 1]),
+            None,
+            marks=pytest.mark.xfail(reason=("Broadcasting for logp not supported")),
+        ),
+        # Two sets of time-varying transition matrices and two state sequences
+        pytest.param(
+            np.stack(
+                [
+                    [
+                        np.array([[0.0, 1.0], [1.0, 0.0]]),
+                        np.array([[0.0, 1.0], [1.0, 0.0]]),
+                        np.array([[0.0, 1.0], [1.0, 0.0]]),
+                        np.array([[0.0, 1.0], [1.0, 0.0]]),
+                    ],
+                    [
+                        np.array([[1.0, 0.0], [0.0, 1.0]]),
+                        np.array([[1.0, 0.0], [0.0, 1.0]]),
+                        np.array([[1.0, 0.0], [0.0, 1.0]]),
+                        np.array([[1.0, 0.0], [0.0, 1.0]]),
+                    ],
+                ],
+                axis=0,
+            ),
+            np.r_[0.5, 0.5],
+            np.array([[1, 0, 1, 0], [0, 0, 0, 0]]),
+            # np.array([1, 1, 1, 1]),
+            None,
+            marks=pytest.mark.xfail(reason=("Broadcasting for logp not supported")),
+        ),
+        # Two sets of time-varying transition matrices--via `gamma_0`
+        # broadcasting--and two state sequences
+        pytest.param(
+            np.stack(
+                [
+                    [
+                        np.array([[0.0, 1.0], [1.0, 0.0]]),
+                        np.array([[0.0, 1.0], [1.0, 0.0]]),
+                        np.array([[0.0, 1.0], [1.0, 0.0]]),
+                        np.array([[0.0, 1.0], [1.0, 0.0]]),
+                    ],
+                    [
+                        np.array([[1.0, 0.0], [0.0, 1.0]]),
+                        np.array([[1.0, 0.0], [0.0, 1.0]]),
+                        np.array([[1.0, 0.0], [0.0, 1.0]]),
+                        np.array([[1.0, 0.0], [0.0, 1.0]]),
+                    ],
+                ],
+                axis=0,
+            ),
+            np.array([[0.5, 0.5], [0.5, 0.5]]),
+            np.array([[1, 0, 1, 0], [0, 0, 0, 0]]),
+            # np.array([1, 1, 1, 1]),
+            None,
+            marks=pytest.mark.xfail(reason=("Broadcasting for logp not supported")),
+        ),
+        # "Time"-varying transition matrices with a single vector of initial
+        # probabilities, but--this time--with better test values
+        pytest.param(
+            np.stack(
+                [
+                    np.array([[0.1, 0.9], [0.5, 0.5]]),
+                    np.array([[0.2, 0.8], [0.6, 0.4]]),
+                    np.array([[0.3, 0.7], [0.7, 0.3]]),
+                    np.array([[0.4, 0.6], [0.8, 0.2]]),
+                ],
+                axis=0,
+            ),
+            np.r_[0.3, 0.7],
+            np.r_[1, 0, 1, 0],
+            None,
+            marks=pytest.mark.xfail(reason=("Broadcasting for logp not supported")),
+        ),
+    ],
+)
+def test_DiscreteMarkovChain_logp(Gammas, gamma_0, obs, exp_res):
     aesara.config.compute_test_value = "warn"
+    test_dist = DiscreteMarkovChain.dist(Gammas, gamma_0, shape=obs.shape[-1])
+    test_logp_tt = test_dist.logp(obs)
+    test_logp_val = test_logp_tt.eval()
 
-    # A single transition matrix and initial probabilities vector for each
-    # element in the state sequence
-    test_Gammas = np.array([[[0.0, 1.0], [1.0, 0.0]]])
-    test_gamma_0 = np.r_[1.0, 0.0]
-    test_obs = np.r_[1, 0, 1, 0]
+    if exp_res is None:
 
-    test_dist = DiscreteMarkovChain.dist(
-        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
-    )
-    test_logp_tt = test_dist.logp(test_obs)
-    assert test_logp_tt.eval() == 0
+        def logp_single_chain(Gammas, gamma_0, obs):
+            state_transitions = np.stack([obs[:-1], obs[1:]]).T
 
-    # "Time"-varying transition matrices with a single vector of initial
-    # probabilities
-    test_Gammas = np.stack(
-        [
-            np.array([[0.0, 1.0], [1.0, 0.0]]),
-            np.array([[0.0, 1.0], [1.0, 0.0]]),
-            np.array([[0.0, 1.0], [1.0, 0.0]]),
-            np.array([[0.0, 1.0], [1.0, 0.0]]),
-        ],
-        axis=0,
-    )
+            p_S_0_to_1 = gamma_0.dot(Gammas[0])
 
-    test_gamma_0 = np.r_[1.0, 0.0]
+            p_S_obs = np.empty_like(obs, dtype=np.float64)
+            p_S_obs[0] = p_S_0_to_1[obs[0]]
 
-    test_obs = np.r_[1, 0, 1, 0]
+            for t, (S_tm1, S_t) in enumerate(state_transitions):
+                p_S_obs[t + 1] = Gammas[t, S_tm1, S_t]
 
-    test_dist = DiscreteMarkovChain.dist(
-        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
-    )
+            return np.log(p_S_obs)
 
-    test_logp_tt = test_dist.logp(test_obs)
+        logp_fn = np.vectorize(logp_single_chain, signature="(n,m,m),(m),(n)->(n)")
 
-    assert test_logp_tt.eval() == 0
+        Gammas = np.broadcast_to(Gammas, (obs.shape[0],) + Gammas.shape[-2:])
+        exp_res = logp_fn(Gammas, gamma_0, obs)
 
-    # Static transition matrix and two state sequences
-    test_Gammas = np.array([[[0.0, 1.0], [1.0, 0.0]]])
+        exp_res = exp_res.sum(-1)
 
-    test_obs = np.array([[1, 0, 1, 0], [0, 1, 0, 1]])
-
-    test_gamma_0 = np.r_[0.5, 0.5]
-
-    test_dist = DiscreteMarkovChain.dist(
-        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
-    )
-
-    test_logp_tt = test_dist.logp(test_obs)
-
-    test_logp = test_logp_tt.eval()
-    assert test_logp[0] == test_logp[1]
-
-    # Time-varying transition matrices and two state sequences
-    test_Gammas = np.stack(
-        [
-            np.array([[0.0, 1.0], [1.0, 0.0]]),
-            np.array([[0.0, 1.0], [1.0, 0.0]]),
-            np.array([[0.0, 1.0], [1.0, 0.0]]),
-            np.array([[0.0, 1.0], [1.0, 0.0]]),
-        ],
-        axis=0,
-    )
-
-    test_obs = np.array([[1, 0, 1, 0], [0, 1, 0, 1]])
-
-    test_gamma_0 = np.r_[0.5, 0.5]
-
-    test_dist = DiscreteMarkovChain.dist(
-        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
-    )
-
-    test_logp_tt = test_dist.logp(test_obs)
-
-    test_logp = test_logp_tt.eval()
-    assert test_logp[0] == test_logp[1]
-
-    # Two sets of time-varying transition matrices and two state sequences
-    test_Gammas = np.stack(
-        [
-            [
-                np.array([[0.0, 1.0], [1.0, 0.0]]),
-                np.array([[0.0, 1.0], [1.0, 0.0]]),
-                np.array([[0.0, 1.0], [1.0, 0.0]]),
-                np.array([[0.0, 1.0], [1.0, 0.0]]),
-            ],
-            [
-                np.array([[1.0, 0.0], [0.0, 1.0]]),
-                np.array([[1.0, 0.0], [0.0, 1.0]]),
-                np.array([[1.0, 0.0], [0.0, 1.0]]),
-                np.array([[1.0, 0.0], [0.0, 1.0]]),
-            ],
-        ],
-        axis=0,
-    )
-
-    test_obs = np.array([[1, 0, 1, 0], [0, 0, 0, 0]])
-
-    test_gamma_0 = np.r_[0.5, 0.5]
-
-    test_dist = DiscreteMarkovChain.dist(
-        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
-    )
-
-    test_logp_tt = test_dist.logp(test_obs)
-
-    test_logp = test_logp_tt.eval()
-    assert test_logp[0] == test_logp[1]
-
-    # Two sets of time-varying transition matrices--via `gamma_0`
-    # broadcasting--and two state sequences
-    test_gamma_0 = np.array([[0.5, 0.5], [0.5, 0.5]])
-
-    test_dist = DiscreteMarkovChain.dist(
-        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
-    )
-
-    test_logp_tt = test_dist.logp(test_obs)
-
-    test_logp = test_logp_tt.eval()
-    assert test_logp[0] == test_logp[1]
-
-    # "Time"-varying transition matrices with a single vector of initial
-    # probabilities, but--this time--with better test values
-    test_Gammas = np.stack(
-        [
-            np.array([[0.1, 0.9], [0.5, 0.5]]),
-            np.array([[0.2, 0.8], [0.6, 0.4]]),
-            np.array([[0.3, 0.7], [0.7, 0.3]]),
-            np.array([[0.4, 0.6], [0.8, 0.2]]),
-        ],
-        axis=0,
-    )
-
-    test_gamma_0 = np.r_[0.3, 0.7]
-
-    test_obs = np.r_[1, 0, 1, 0]
-
-    test_dist = DiscreteMarkovChain.dist(
-        test_Gammas, test_gamma_0, shape=test_obs.shape[-1]
-    )
-
-    test_logp_tt = test_dist.logp(test_obs)
-
-    logp_res = test_logp_tt.eval()
-
-    logp_exp = np.concatenate(
-        [
-            test_gamma_0.dot(test_Gammas[0])[None, ...],
-            test_Gammas[(np.ogrid[1:4], test_obs[:-1])],
-        ],
-        axis=-2,
-    )
-    logp_exp = logp_exp[(np.ogrid[:4], test_obs)]
-    logp_exp = np.log(logp_exp).sum()
-    assert np.allclose(logp_res, logp_exp)
+    assert np.allclose(test_logp_val, exp_res)
 
 
 def test_SwitchingProcess_random():
