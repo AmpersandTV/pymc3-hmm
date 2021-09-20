@@ -6,14 +6,12 @@ try:  # pragma: no cover
     import aesara
     import aesara.tensor as at
     from aesara.graph.op import get_test_value
-    from aesara.graph.utils import TestValueError
     from aesara.scalar import upcast
     from aesara.tensor.extra_ops import broadcast_to as at_broadcast_to
 except ImportError:  # pragma: no cover
     import theano as aesara
     import theano.tensor as at
     from theano.graph.op import get_test_value
-    from theano.graph.utils import TestValueError
     from theano.scalar import upcast
     from theano.tensor.extra_ops import broadcast_to as at_broadcast_to
 
@@ -29,7 +27,7 @@ from pymc3.distributions.mixture import _conversion_map, all_discrete
 from pymc3_hmm.utils import tt_broadcast_arrays, vsearchsorted
 
 
-def distribution_subset_args(dist, shape, idx, point=None):
+def distribution_subset_args(dist, shape, idx):
     """Obtain subsets of a distribution parameters via indexing.
 
     This is used to effectively "lift" slices/`Subtensor` `Op`s up to a
@@ -52,11 +50,6 @@ def distribution_subset_args(dist, shape, idx, point=None):
         to (naively) determine the parameters' broadcasting pattern.
     idx : ndarray or TensorVariable
         The indices applied to the parameters of `dist`.
-    point : dict (optional)
-        A dictionary keyed on the `str` names of each parameter in `dist`,
-        which are mapped to NumPy values for the corresponding parameter.  When
-        this is given, the Theano parameters are replaced by their values in the
-        dictionary.
 
     Returns
     -------
@@ -68,27 +61,10 @@ def distribution_subset_args(dist, shape, idx, point=None):
 
     dist_param_names = dist._distr_parameters_for_repr()
 
-    if point:
-        # Try to get a concrete/NumPy value if a `point` parameter was
-        # given.
-        try:
-            idx = get_test_value(idx)
-        except TestValueError:  # pragma: no cover
-            pass
-
     res = []
     for param in dist_param_names:
 
-        # Use the (sampled) point, if present
-        if point is None or param not in point:
-            x = getattr(dist, param, None)
-
-            if x is None:
-                continue
-        else:
-            x = point[param]
-
-        bcast_res = at_broadcast_to(x, shape)
+        bcast_res = at_broadcast_to(getattr(dist, param), shape)
 
         res.append(bcast_res[idx])
 
@@ -252,7 +228,7 @@ class SwitchingProcess(Distribution):
             i_size = len(i_idx[0])
             if i_size > 0:
                 subset_args = distribution_subset_args(
-                    dist, expanded_states.shape, i_idx, point=point
+                    dist, expanded_states.shape, i_idx
                 )
                 state_dist = dist.dist(*subset_args)
 
