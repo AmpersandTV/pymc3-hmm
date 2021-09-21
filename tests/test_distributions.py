@@ -544,21 +544,21 @@ def test_subset_args():
     test_dist = Constant.dist(c=np.r_[0.1, 1.2, 2.3])
     test_idx = np.r_[0, 2]
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx)
-    assert np.array_equal(res[0].eval(), np.r_[0.1, 2.3])
+    assert np.array_equal(res["c"].eval(), np.r_[0.1, 2.3])
 
     test_dist = pm.Normal.dist(mu=np.r_[0.1, 1.2, 2.3], sigma=np.r_[10.0])
     test_idx = np.r_[0, 2]
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx)
-    assert np.array_equal(res[0].eval(), np.r_[0.1, 2.3])
-    assert np.array_equal(res[1].eval(), np.r_[10.0, 10.0])
+    assert np.array_equal(res["mu"].eval(), np.r_[0.1, 2.3])
+    assert np.array_equal(res["sigma"].eval(), np.r_[10.0, 10.0])
 
     test_dist = pm.Poisson.dist(mu=np.r_[0.1, 1.2, 2.3])
     test_idx = np.r_[0, 2]
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx)
-    assert np.array_equal(res[0].eval(), np.r_[0.1, 2.3])
+    assert np.array_equal(res["mu"].eval(), np.r_[0.1, 2.3])
 
     test_dist = pm.NegativeBinomial.dist(mu=np.r_[0.1, 1.2, 2.3], alpha=2)
     test_idx = np.r_[0, 2]
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx)
-    assert np.array_equal(res[0].eval(), np.r_[0.1, 2.3])
-    assert np.array_equal(res[1].eval(), np.r_[2.0, 2.0])
+    assert np.array_equal(res["mu"].eval(), np.r_[0.1, 2.3])
+    assert np.array_equal(res["alpha"].eval(), np.r_[2.0, 2.0])
