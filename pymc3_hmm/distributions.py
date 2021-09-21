@@ -53,20 +53,18 @@ def distribution_subset_args(dist, shape, idx):
 
     Returns
     -------
-    res: list
-        An ordered set of broadcasted and indexed parameters for `dist`.
-
+    A ``dict`` of the broadcasted and indexed parameters for `dist`.
 
     """
 
     dist_param_names = dist._distr_parameters_for_repr()
 
-    res = []
+    res = dict()
     for param in dist_param_names:
 
         bcast_res = at_broadcast_to(getattr(dist, param), shape)
 
-        res.append(bcast_res[idx])
+        res[param] = bcast_res[idx]
 
     return res
 
@@ -170,7 +168,8 @@ class SwitchingProcess(Distribution):
         for i, dist in enumerate(self.comp_dists):
             i_mask = at.eq(self.states, i)
             obs_i = obs_tt[i_mask]
-            subset_dist = dist.dist(*distribution_subset_args(dist, obs.shape, i_mask))
+            subset_dist_kwargs = distribution_subset_args(dist, obs.shape, i_mask)
+            subset_dist = dist.dist(**subset_dist_kwargs)
             logp_val = at.set_subtensor(logp_val[i_mask], subset_dist.logp(obs_i))
 
         return logp_val
@@ -227,10 +226,10 @@ class SwitchingProcess(Distribution):
             i_idx = np.where(expanded_states == i)
             i_size = len(i_idx[0])
             if i_size > 0:
-                subset_args = distribution_subset_args(
+                subset_kwargs = distribution_subset_args(
                     dist, expanded_states.shape, i_idx
                 )
-                state_dist = dist.dist(*subset_args)
+                state_dist = dist.dist(**subset_kwargs)
 
                 sample = state_dist.random(point=point)
                 samples[i_idx] = sample
