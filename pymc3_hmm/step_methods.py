@@ -11,9 +11,12 @@ try:  # pragma: no cover
     from aesara.graph.op import get_test_value as test_value
     from aesara.graph.opt import OpRemove, pre_greedy_local_optimizer
     from aesara.graph.optdb import Query
+    from aesara.scalar.basic import Dot
+    from aesara.sparse.basic import StructuredDot
     from aesara.tensor.elemwise import DimShuffle, Elemwise
     from aesara.tensor.subtensor import AdvancedIncSubtensor1
     from aesara.tensor.var import TensorConstant
+
 except ImportError:  # pragma: no cover
     import theano.scalar as aes
     import theano.tensor as at
@@ -26,13 +29,17 @@ except ImportError:  # pragma: no cover
     from theano.tensor.elemwise import DimShuffle, Elemwise
     from theano.tensor.subtensor import AdvancedIncSubtensor1
     from theano.tensor.var import TensorConstant
+    from theano.tensor.basic import Dot
+    from theano.sparse.basic import StructuredDot
 
 import pymc3 as pm
+import scipy
 from pymc3.distributions.distribution import draw_values
 from pymc3.step_methods.arraystep import ArrayStep, BlockedStep, Competence
 from pymc3.util import get_untransformed_name
+from scipy.stats import invgamma
 
-from pymc3_hmm.distributions import DiscreteMarkovChain, SwitchingProcess
+from pymc3_hmm.distributions import DiscreteMarkovChain, HorseShoe, SwitchingProcess
 from pymc3_hmm.utils import compute_trans_freqs
 
 big: float = 1e20
@@ -452,3 +459,150 @@ class TransMatConjugateStep(ArrayStep):
             return Competence.COMPATIBLE
 
         return Competence.INCOMPATIBLE
+
+
+def large_p_mvnormal_sampler(D_diag, Phi, a):
+    r"""Efficiently sample from a large multivariate normal.
+
+    This function draws samples from the following distribution:
+
+    .. math::
+       \beta \sim \operatorname{N}\left( \mu, \Sigma \right)
+
+    where
+
+    .. math::
+       \mu = \Sigma \Phi^\top a, \\
+       \Sigma = \left( \Phi^\top \Phi + D^{-1} \right)^{-1}
+
+    and :math:`a \in \mathbb{R}^{n}`, :math:`\Phi \in \mathbb{R}^{n \times p}`.
+
+    This approach is particularly effective when :math:`p \gg n`.
+
+    From "Fast sampling with Gaussian scale-mixture priors in high-dimensional
+    regression", Bhattacharya, Chakraborty, and Mallick, 2015.
+
+    """
+    N = a.shape[0]
+    u = np.random.normal(0, np.sqrt(D_diag))
+    delta = np.random.normal(size=N)
+    if scipy.sparse.issparse(Phi):
+        Phi_D = Phi.multiply(D_diag)
+        v = Phi * u + delta
+        Z = (Phi_D * Phi.T + scipy.sparse.eye(N)).toarray()
+        w = scipy.linalg.solve(Z, a - v, assume_a="sym")
+        beta = u + Phi_D.T * w
+    else:
+        Phi_D = Phi * D_diag
+        v = Phi.dot(u) + delta
+        Z = Phi_D.dot(Phi.T)
+        Z.flat[:: N + 1] += 1
+        w = scipy.linalg.solve(Z, a - v, assume_a="sym")
+        beta = u + Phi_D.T @ w
+    return beta
+
+
+def hs_step(
+    lambda2: np.ndarray,
+    tau2: np.ndarray,
+    vi: np.ndarray,
+    xi: np.ndarray,
+    X: np.ndarray,
+    y: np.ndarray,
+):
+    N, M = X.shape
+
+    D_diag = tau2 * lambda2
+    beta = large_p_mvnormal_sampler(D_diag, X, y)
+    beta2 = beta ** 2
+
+    lambda2 = invgamma(a=1, scale=1 / vi + beta2 / (2 * tau2)).rvs()
+    tau2 = invgamma(a=(M + 1) / 2, scale=1 / xi + (beta2 / lambda2).sum() / 2).rvs()
+    vi = invgamma(a=1, scale=1 + 1 / lambda2).rvs()
+    xi = invgamma(a=1, scale=1 + 1 / tau2).rvs()
+
+    return beta, lambda2, tau2, vi, xi
+
+
+class HSStep(BlockedStep):
+    name = "hsgibbs"
+
+    def __init__(self, vars, values=None, model=None):
+        model = pm.modelcontext(model)
+
+        if len(vars) > 1:
+            raise ValueError("This sampler only takes one variable.")
+
+        (beta,) = pm.inputvars(vars)
+
+        if not isinstance(beta.distribution, HorseShoe):
+            raise TypeError("This sampler only samples `HorseShoe`s.")
+
+        non_var_rvs = [
+            value for attr, value in model.named_vars.items() if value != beta
+        ]
+        y_fn, X_fn = None, None
+        # loop through all the rvs excpet for the stepping rv
+        for i in non_var_rvs:
+            # looking thru all the attributes of the rv and see if any of the
+            # parameters are consist of multiplication relationship of the horseshoe var
+            if hasattr(i, "distribution") and isinstance(i.distribution, pm.Normal):
+                mu = i.distribution.mu
+            elif isinstance(i, pm.model.DeterministicWrapper):
+                mu = i.owner.inputs[0]
+            else:
+                continue  # pragma: no cover
+            dense_dot = mu.owner and isinstance(mu.owner.op, Dot)
+            sparse_dot = mu.owner and isinstance(mu.owner.op, StructuredDot)
+
+            dense_inputs = dense_dot and beta in mu.owner.inputs
+            sparse_inputs = sparse_dot and beta in mu.owner.inputs[1].owner.inputs
+
+            if not (dense_inputs or sparse_inputs):
+                continue
+
+            y_fn = None
+            for j in model.observed_RVs:
+
+                if i == j or (
+                    isinstance(j.distribution, pm.Normal) and i == j.distribution.mu
+                ):
+
+                    def y_fn(x):
+                        return j.observations
+
+            if not y_fn:
+                y_fn = model.fn(i)
+
+            if dense_inputs:
+                X_fn = model.fn(mu.owner.inputs[1].T)
+            else:
+                X_fn = model.fn(mu.owner.inputs[0])
+
+        if not (X_fn and y_fn):
+            raise RuntimeError(
+                f"Cannot find Design matrix or dependent variable assoicate with {beta}"
+            )
+
+        self.vars = [beta]
+
+        M = model.test_point[beta.name].shape[-1]
+
+        self.vi = np.full(M, 1)
+        self.lambda2 = np.full(M, 1)
+        self.beta = np.full(M, 1)
+        self.tau2 = 1
+        self.xi = 1
+        self.y_fn = y_fn
+        self.X_fn = X_fn
+
+    def step(self, point):
+        # breakpoint()
+        y = self.y_fn(point)
+        X = self.X_fn(point)
+
+        self.beta, self.lambda2, self.tau2, self.vi, self.xi = hs_step(
+            self.lambda2, self.tau2, self.vi, self.xi, X, y
+        )
+        point[self.vars[0].name] = self.beta
+        return point

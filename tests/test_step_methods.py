@@ -5,16 +5,25 @@ import numpy as np
 try:
     import aesara.tensor as at
     from aesara.graph.op import get_test_value
+    from aesara.sparse import structured_dot as sp_dot
 except ImportError:
     import theano.tensor as at
     from theano.graph.op import get_test_value
+    from theano.sparse import structured_dot as sp_dot
 
 import pymc3 as pm
 import pytest
 import scipy as sp
 
-from pymc3_hmm.distributions import DiscreteMarkovChain, PoissonZeroProcess
-from pymc3_hmm.step_methods import FFBSStep, TransMatConjugateStep, ffbs_step
+from pymc3_hmm.distributions import DiscreteMarkovChain, HorseShoe, PoissonZeroProcess
+from pymc3_hmm.step_methods import (
+    FFBSStep,
+    HSStep,
+    TransMatConjugateStep,
+    ffbs_step,
+    hs_step,
+    large_p_mvnormal_sampler,
+)
 from pymc3_hmm.utils import compute_steady_state, compute_trans_freqs
 from tests.utils import simulate_poiszero_hmm
 
@@ -337,3 +346,128 @@ def test_TransMatConjugateStep_subtensors():
         )
 
         transmat = TransMatConjugateStep(P_rv)
+
+
+def test_large_p_mvnormal_sampler():
+
+    # test case for dense matrix
+    np.random.seed(2032)
+    X = np.random.normal(size=250).reshape((50, 5))
+    beta_true = np.ones(5)
+    y = np.random.normal(X.dot(beta_true), 1)
+
+    samples = large_p_mvnormal_sampler(np.ones(5), X, y)
+    assert samples.shape == (5,)
+
+    sample_sigma = np.linalg.inv(X.T.dot(X) + np.eye(5))
+    sample_mu = sample_sigma.dot(X.T).dot(y)
+    np.testing.assert_allclose(sample_mu.mean(), 1, rtol=0.1, atol=0)
+
+    # test case for sparse matrix
+    samples_sp = large_p_mvnormal_sampler(np.ones(5), sp.sparse.csr_matrix(X), y)
+    assert samples_sp.shape == (5,)
+    np.testing.assert_allclose(samples_sp.mean(), 1, rtol=0.1, atol=0)
+
+
+def test_hs_step():
+    # test case for dense matrix
+    np.random.seed(2032)
+    M = 5
+    X = np.random.normal(size=250).reshape((50, M))
+    beta_true = np.random.normal(size=M)
+    y = np.random.normal(X.dot(beta_true), 1)
+
+    vi = np.full(M, 1)
+    lambda2 = np.full(M, 1)
+    tau2 = 1
+    xi = 1
+    beta, lambda2, tau2, vi, xi = hs_step(lambda2, tau2, vi, xi, X, y)
+    assert beta.shape == beta_true.shape
+    assert (np.abs(beta - beta_true) / beta_true).mean() < 0.5
+
+    # test case for sparse matrix
+
+    vi = np.full(M, 1)
+    lambda2 = np.full(M, 1)
+    tau2 = 1
+    xi = 1
+    beta, lambda2, tau2, vi, xi = hs_step(
+        lambda2, tau2, vi, xi, sp.sparse.csr_matrix(X), y
+    )
+    assert beta.shape == beta_true.shape
+    assert (np.abs(beta - beta_true) / beta_true).mean() < 0.5
+
+
+def test_Hsstep():
+    np.random.seed(2032)
+    M = 5
+    N = 50
+    X = np.random.normal(size=N * M).reshape((N, M))
+    beta_true = np.random.normal(size=M)
+    y = np.random.normal(X.dot(beta_true), 1)
+
+    M = X.shape[1]
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M)
+        pm.Normal("y", mu=beta.dot(X.T), sigma=1, observed=y)
+        hsstep = HSStep([beta])
+        trace = pm.sample(
+            draws=50, tune=0, step=hsstep, chains=1, return_inferencedata=True
+        )
+
+    beta_samples = trace.posterior["beta"][0].values
+
+    assert beta_samples.shape == (50, M)
+    np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.3)
+
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M)
+        mu = pm.Deterministic("mu", beta.dot(X.T))
+        pm.Normal("y", mu=mu, sigma=1, observed=y)
+        hsstep = HSStep([beta])
+        trace = pm.sample(
+            draws=50, tune=0, step=hsstep, chains=1, return_inferencedata=True
+        )
+
+    beta_samples = trace.posterior["beta"][0].values
+    assert beta_samples.shape == (50, M)
+    np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.3)
+
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M)
+        pm.TruncatedNormal("alpha", mu=beta.dot(X.T), sigma=1, observed=y)
+
+        with pytest.raises(RuntimeError):
+            hsstep = HSStep([beta])
+
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M)
+        mu = pm.Deterministic("mu", beta.dot(X.T))
+        pm.TruncatedNormal("y", mu=mu, sigma=1, observed=y)
+        hsstep = HSStep([beta])
+        trace = pm.sample(
+            draws=50, tune=0, step=hsstep, chains=1, return_inferencedata=True
+        )
+
+    beta_samples = trace.posterior["beta"][0].values
+    assert beta_samples.shape == (50, M)
+
+    # test case for sparse matrix
+    X = sp.sparse.csr_matrix(X)
+
+    M = X.shape[1]
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M)
+        pm.Normal("y", mu=sp_dot(X, at.shape_padright(beta)), sigma=1, observed=y)
+        hsstep = HSStep([beta])
+        trace = pm.sample(
+            draws=50, tune=0, step=hsstep, chains=1, return_inferencedata=True
+        )
+        beta_2 = HorseShoe("beta_2", tau=1, shape=M)
+        with pytest.raises(ValueError):
+            HSStep([beta, beta_2])
+
+    beta_samples = trace.posterior["beta"][0].values
+
+    assert beta_samples.shape == (50, M)
+    np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.3)

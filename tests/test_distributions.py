@@ -13,6 +13,7 @@ import pytest
 from pymc3_hmm.distributions import (
     Constant,
     DiscreteMarkovChain,
+    HorseShoe,
     PoissonZeroProcess,
     SwitchingProcess,
     distribution_subset_args,
@@ -562,3 +563,17 @@ def test_subset_args():
     res = distribution_subset_args(test_dist, shape=[3], idx=test_idx)
     assert np.array_equal(res["mu"].eval(), np.r_[0.1, 2.3])
     assert np.array_equal(res["alpha"].eval(), np.r_[2.0, 2.0])
+
+
+def test_HorseShoe():
+    with pm.Model():
+        test_beta = HorseShoe.dist(tau=1, shape=2)
+        test_sample = test_beta.random(size=1000).eval()
+
+    assert test_sample.shape == (1000, 2)
+    assert np.isclose(np.median(test_sample), 0, atol=0.01)
+    assert np.percentile(test_sample.flatten(), 85) < 2
+    assert np.percentile(test_sample.flatten(), 15) > -2
+    assert np.percentile(test_sample.flatten(), 99) > 10
+    assert np.percentile(test_sample.flatten(), 1) < -10
+    assert test_beta.logp(1) == 0
