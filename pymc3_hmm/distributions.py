@@ -452,3 +452,34 @@ class Constant(Distribution):
 
     def _distr_parameters_for_repr(self):
         return ["c"]
+
+
+class HorseShoe(pm.Normal):
+    """
+    A Horseshoe distribution
+
+    """
+
+    def __init__(self, tau, shape, **kwargs):
+        self.tau = tau
+        self.beta_raw = pm.Normal.dist(tau=1, shape=shape)
+        self.lmbda = pm.HalfCauchy.dist(beta=1, shape=shape)
+        super().__init__(shape=shape, **kwargs)
+
+    def random(self, point=None, size=None):
+        beta_raw = self.beta_raw.random(point=point, size=size)
+        lmbda = self.lmbda.random(point=point, size=size)
+        return beta_raw * lmbda * self.tau
+
+    def logp(self, values):
+        """
+        XXX: This is only a placeholder for the log-probability.
+        It is required to get past PyMC3 design restrictions.
+        Do not use this distribution without the `HSStep` sampler!
+
+        """
+        warnings.warn(
+            "logp of HorseShoe class is not implemented."
+            "Do not use this distribution without the `HSStep` sampler!"
+        )
+        return 0
