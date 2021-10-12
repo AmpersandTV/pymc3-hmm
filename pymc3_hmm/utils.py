@@ -1,5 +1,7 @@
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Text, Tuple, Union
 
+import datashader as ds
+import datashader.transfer_functions as tf
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -232,7 +234,7 @@ def plot_split_timeseries(
     figsize: Tuple[int, ...] = (15, 15),
     title: Optional[str] = None,
     plot_fn: Optional[Callable[..., Any]] = None,
-    **plot_kwds
+    **plot_kwds,
 ):  # pragma: no cover
     """Plot long timeseries by splitting them across multiple rows using a given time frequency.
 
@@ -371,7 +373,7 @@ def plot_timeseries_histograms(
     data: pd.DataFrame,
     bins: Union[str, int, np.ndarray, Sequence[Union[int, float]]] = "auto",
     colormap: Colormap = cm.Blues,
-    **plot_kwargs
+    **plot_kwargs,
 ) -> Axes:  # pragma: no cover
     """Generate a heat-map-like plot for time-series sample data.
 
@@ -477,6 +479,65 @@ def plot_split_timeseries_histograms(
         plot_data[sample_col],
         axes_split_data=axes_split_data,
         plot_fn=plot_timeseries_histograms,
+    )
+
+    return axes_split_data
+
+
+def plot_ts_histograms(
+    axes: Axes,
+    data: pd.DataFrame,
+    sample_col: Optional[Text] = "Y_t",
+    N_obs: Optional[int] = None,
+    **canvas_kwargs,
+) -> Axes:  # pragma: no cover
+    """Paint time series histograms on canvas"""
+    if "draw" not in data.columns:
+        raise ValueError("`data` does not have 'draw' number in its columns")
+    n_draws = np.max(data["draw"]) + 1
+    total_obs = data.shape[0] // n_draws
+    if N_obs is None:
+        N_obs = total_obs
+    elif N_obs > total_obs:
+        raise ValueError(f"`N_obs` ({N_obs}) must be <= `total_obs` ({total_obs})")
+
+    if "plot_width" not in canvas_kwargs:
+        canvas_kwargs["plot_width"] = N_obs
+
+    # initialize canvas
+    canvas = ds.Canvas(**canvas_kwargs)
+
+    # get data to plot
+    data = data.head(N_obs * n_draws).copy()
+    dts = data.index.unique()[:N_obs]
+    data["dt"] = np.repeat(dts.astype(int), n_draws)
+
+    agg = canvas.points(data, "dt", sample_col)
+    agg.coords.update({"dt": dts})
+
+    shade_res = tf.shade(agg, cmap="black", how="eq_hist")
+    res_img = tf.Image(shade_res)
+
+    # start painting
+    _ = res_img.plot(cmap="Blues", ax=axes, label="posterior predictives")
+
+    return axes
+
+
+def plot_split_ts_histograms(
+    plot_data: pd.DataFrame,
+    observed_data: pd.Series,
+    plot_fn: Callable,
+    **split_ts_kwargs,
+):  # pragma: no cover
+    axes_split_data = plot_split_timeseries(
+        observed_data, plot_fn=plot_fn, **split_ts_kwargs
+    )
+
+    _ = plot_split_timeseries(
+        plot_data,
+        axes_split_data=axes_split_data,
+        plot_fn=plot_ts_histograms,
     )
 
     return axes_split_data
