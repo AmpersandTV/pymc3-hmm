@@ -75,7 +75,7 @@ jobs:
     - name: Install dependencies
       shell: bash -l {0}
       run: |
-        mamba install --yes -q "python~=${PYTHON_VERSION}=*_cpython" theano-pymc mkl numpy scipy pip mkl-service
+        mamba install --yes -q "python~=${PYTHON_VERSION}=*_cpython" theano-pymc mkl numpy scipy pip mkl-service datashader
         if [[ "${{ matrix.pymc3-version }}" != "stable" ]]; then pip install "pymc3 @ git+https://github.com/pymc-devs/pymc3.git@master"; fi
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         mamba list && pip freeze

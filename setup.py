@@ -18,6 +18,7 @@ setup(
         "numpy>=1.18.1",
         "scipy>=1.4.0",
         "pymc3>=3.11.1,<4.0.0",
+        "datashader>=0.13.0",
     ],
     tests_require=["pytest"],
     long_description=open("README.md").read() if exists("README.md") else "",
