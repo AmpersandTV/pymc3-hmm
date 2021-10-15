@@ -491,7 +491,25 @@ def plot_ts_histograms(
     N_obs: Optional[int] = None,
     **canvas_kwargs,
 ) -> Axes:  # pragma: no cover
-    """Paint time series histograms on canvas"""
+    """Plot time series histograms on `datashader`'s canvas
+
+    Parameters
+    ==========
+    axes: Axes
+        The Matplotlib axes to use for plotting.
+    data: DataFrame
+        The sample data to be plotted. This should be in "long" format: i.e.
+        the index should be "time" and the columns should contain "draw" and
+        `sample_col`.
+    sample_col: str
+        Sample column to be plotted.
+    N_obs: int
+        Number of observations to plot. If unspecified, plotting all oberservations
+        in `data`.
+    canvas_kwargs
+        Keywords passed to ``plot_split_timeseries``.
+
+    """
     if "draw" not in data.columns:
         raise ValueError("`data` does not have 'draw' number in its columns")
     n_draws = np.max(data["draw"]) + 1
@@ -530,6 +548,24 @@ def plot_split_ts_histograms(
     plot_fn: Callable,
     **split_ts_kwargs,
 ):  # pragma: no cover
+    """A wrapper function for `plot_split_timeseries` and `plot_ts_histograms`
+
+    Parameters
+    ==========
+    plot_data: DataFrame
+        The sample data to be plotted. This should be in "long" format: i.e.
+        the index should be "time" and the columns should contain "draw" and
+        `sample_col`.
+    observed_data: Series
+        The observed values corresponding to the samples in `plot_data`. The
+        index should be "time" and the column should be observed values.
+    plot_fn: callable
+        A user-defined function to plot non-sample column(s), juxtaposed with
+        the histogram plot of the sample column.
+    split_ts_kwargs
+        Keywords passed to ``plot_split_timeseries``.
+
+    """
     axes_split_data = plot_split_timeseries(
         observed_data, plot_fn=plot_fn, **split_ts_kwargs
     )
