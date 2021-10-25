@@ -488,7 +488,7 @@ def plot_split_timeseries_histograms(
 def plot_ts_histograms(
     axes: Axes,
     data: pd.DataFrame,
-    sample_col: Optional[Text] = "Y_t",
+    sample_col: Text,
     N_obs: Optional[int] = None,
     **canvas_kwargs,
 ) -> Axes:  # pragma: no cover
@@ -544,8 +544,9 @@ def plot_ts_histograms(
 
 
 def plot_split_ts_histograms(
-    plot_data: pd.DataFrame,
-    observed_data: pd.Series,
+    sample_data: pd.DataFrame,
+    sample_col: Text,
+    nonsample_data: Union[pd.Series, pd.DataFrame],
     plot_fn: Callable,
     **split_ts_kwargs,
 ):  # pragma: no cover
@@ -568,13 +569,14 @@ def plot_split_ts_histograms(
 
     """
     axes_split_data = plot_split_timeseries(
-        observed_data, plot_fn=plot_fn, **split_ts_kwargs
+        nonsample_data, plot_fn=plot_fn, **split_ts_kwargs
     )
 
     _ = plot_split_timeseries(
-        plot_data,
+        sample_data,
         axes_split_data=axes_split_data,
         plot_fn=plot_ts_histograms,
+        sample_col=sample_col,
         **split_ts_kwargs,
     )
 
