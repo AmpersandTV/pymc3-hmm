@@ -479,6 +479,7 @@ def plot_split_timeseries_histograms(
         plot_data[sample_col],
         axes_split_data=axes_split_data,
         plot_fn=plot_timeseries_histograms,
+        **split_ts_kwargs,
     )
 
     return axes_split_data
@@ -574,6 +575,7 @@ def plot_split_ts_histograms(
         plot_data,
         axes_split_data=axes_split_data,
         plot_fn=plot_ts_histograms,
+        **split_ts_kwargs,
     )
 
     return axes_split_data
