@@ -535,6 +535,7 @@ def plot_ts_histograms(
     agg.coords.update({"dt": dts})
 
     shade_res = tf.shade(agg, cmap="black", how="eq_hist")
+    shade_res.values = shade_res.values / np.max(shade_res.values) * np.max(agg.values)
     res_img = tf.Image(shade_res)
 
     # start painting
