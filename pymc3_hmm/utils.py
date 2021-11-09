@@ -310,7 +310,7 @@ def plot_split_timeseries(
         obs_splits = [data.loc[split_idx, :] for split_idx in split_indices]
         major_offset = None
 
-    axes[0].set_title(title)
+    plt.suptitle(title)
 
     return_axes_data = []
     for i, ax in enumerate(axes):
