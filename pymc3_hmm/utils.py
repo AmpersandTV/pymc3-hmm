@@ -529,7 +529,7 @@ def plot_ts_histograms(
     # get data to plot
     data = data.head(N_obs * n_draws).copy()
     dts = data.index.unique()[:N_obs]
-    data["dt"] = np.repeat(dts.astype(int), n_draws)
+    data["dt"] = np.repeat(dts.view(np.int64), n_draws)
 
     agg = canvas.points(data, "dt", sample_col)
     agg.coords.update({"dt": dts})
