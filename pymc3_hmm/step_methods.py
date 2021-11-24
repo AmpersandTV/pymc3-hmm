@@ -1,10 +1,12 @@
 from itertools import chain
+from typing import Callable, Tuple
 
 import numpy as np
 
 try:  # pragma: no cover
     import aesara.scalar as aes
     import aesara.tensor as at
+    from aesara import config
     from aesara.compile import optdb
     from aesara.graph.basic import Variable, graph_inputs
     from aesara.graph.fg import FunctionGraph
@@ -16,7 +18,6 @@ try:  # pragma: no cover
     from aesara.tensor.elemwise import DimShuffle, Elemwise
     from aesara.tensor.subtensor import AdvancedIncSubtensor1
     from aesara.tensor.var import TensorConstant
-
 except ImportError:  # pragma: no cover
     import theano.scalar as aes
     import theano.tensor as at
@@ -31,6 +32,9 @@ except ImportError:  # pragma: no cover
     from theano.tensor.var import TensorConstant
     from theano.tensor.basic import Dot
     from theano.sparse.basic import StructuredDot
+    from theano import config
+
+from functools import singledispatch
 
 import pymc3 as pm
 import scipy
@@ -510,7 +514,7 @@ def hs_step(
     X: np.ndarray,
     y: np.ndarray,
 ):
-    N, M = X.shape
+    _, M = X.shape
 
     D_diag = tau2 * lambda2
     beta = large_p_mvnormal_sampler(D_diag, X, y)
@@ -522,6 +526,73 @@ def hs_step(
     xi = invgamma(a=1, scale=1 + 1 / tau2).rvs()
 
     return beta, lambda2, tau2, vi, xi
+
+
+@singledispatch
+def hs_regression_model(dist: pm.Distribution, rv, model) -> Tuple[Callable, Variable]:
+    """Determine the normal regression model for a Horseshoe sampler.
+
+    Return a function that computes the normal regression: i.e. the observation
+    vector and regression matrix.
+
+    For non-normal distributions, the normal regression model is an
+    approximation (e.g. Polya-Gamma).
+    """  # noqa: E501
+    raise NotImplementedError()
+
+
+@hs_regression_model.register(pm.Normal)
+def hs_regression_model_Normal(dist, rv, model):
+    mu = dist.mu
+    y_X_fn = None
+    if hasattr(rv, "observations"):
+
+        def y_X_fn(points, X):
+            return rv.observations, X
+
+    return y_X_fn, mu
+
+
+@hs_regression_model.register(pm.NegativeBinomial)
+def hs_regression_model_NegativeBinomial(dist, rv, model):
+
+    mu = at.as_tensor_variable(dist.mu)
+
+    if mu.owner and mu.owner.op == at.exp:
+        eta = mu.owner.inputs[0]
+    else:
+        eta = mu
+
+    alpha = at.as_tensor_variable(dist.alpha)
+    if hasattr(rv, "observations"):
+        from polyagamma import random_polyagamma
+
+        # pm.model.fn.signiturw
+        h_z_alpha_fn = model.fn(
+            [alpha + rv.observations, eta.squeeze() - at.log(alpha), alpha]
+        )
+
+        def y_X_fn(points, X):
+            h, z, alpha = h_z_alpha_fn(points)
+
+            omega = random_polyagamma(h, z)
+
+            V_diag_inv = np.abs(omega)
+            sigma2 = 1 / V_diag_inv
+            sigma = np.sqrt(sigma2)
+
+            if scipy.sparse.issparse(X):
+                Phi = (X.T.multiply(np.sqrt(V_diag_inv))).T
+            else:
+                Phi = (X.T * np.sqrt(V_diag_inv)).T
+
+            y_aug = np.log(alpha) + (rv.observations - alpha) / (2.0 * omega)
+            y_aug = (y_aug / sigma).astype(config.floatX)
+            return y_aug, Phi
+
+        return y_X_fn, eta
+
+    return None, eta
 
 
 class HSStep(BlockedStep):
@@ -538,69 +609,81 @@ class HSStep(BlockedStep):
         if not isinstance(beta.distribution, HorseShoe):
             raise TypeError("This sampler only samples `HorseShoe`s.")
 
-        non_var_rvs = [
+        other_model_vars = [
             value for attr, value in model.named_vars.items() if value != beta
         ]
-        y_fn, X_fn = None, None
-        # loop through all the rvs excpet for the stepping rv
-        for i in non_var_rvs:
-            # looking thru all the attributes of the rv and see if any of the
-            # parameters are consist of multiplication relationship of the horseshoe var
-            if hasattr(i, "distribution") and isinstance(i.distribution, pm.Normal):
-                mu = i.distribution.mu
-            elif isinstance(i, pm.model.DeterministicWrapper):
-                mu = i.owner.inputs[0]
-            else:
-                continue  # pragma: no cover
-            dense_dot = mu.owner and isinstance(mu.owner.op, Dot)
-            sparse_dot = mu.owner and isinstance(mu.owner.op, StructuredDot)
+        y_X_fn, X_fn = None, None
 
-            dense_inputs = dense_dot and beta in mu.owner.inputs
-            sparse_inputs = sparse_dot and beta in mu.owner.inputs[1].owner.inputs
+        for var in other_model_vars:
+            # Look through all the attributes of the variable and see if any of
+            # the parameters have a multiplication relationship with the
+            # Horseshoe variable
+            if hasattr(var, "distribution"):
+                try:
+                    y_X_fn, eta = hs_regression_model(var.distribution, var, model)
+                except NotImplementedError:
+                    continue
+            elif isinstance(var, pm.model.DeterministicWrapper):
+                eta = var.owner.inputs[0]
+
+            dense_dot = eta.owner and isinstance(eta.owner.op, Dot)
+            sparse_dot = eta.owner and isinstance(eta.owner.op, StructuredDot)
+
+            dense_inputs = dense_dot and beta in eta.owner.inputs
+            sparse_inputs = sparse_dot and beta in eta.owner.inputs[1].owner.inputs
 
             if not (dense_inputs or sparse_inputs):
                 continue
 
-            y_fn = None
-            for j in model.observed_RVs:
+            if not y_X_fn:
+                # We don't have the observation distribution, so we need to
+                # find it.  This happens when a `Deterministic` bridges a
+                # `Horseshoe` parameter with it's observation distribution's
+                # mean.
+                y_X_fn = None
+                obs_mu = None
+                for obs_rv in model.observed_RVs:
+                    try:
+                        y_X_fn, obs_mu = hs_regression_model(
+                            obs_rv.distribution, obs_rv, model
+                        )
+                        break
+                    except NotImplementedError:
+                        continue
 
-                if i == j or (
-                    isinstance(j.distribution, pm.Normal) and i == j.distribution.mu
-                ):
-
-                    def y_fn(x):
-                        return j.observations
-
-            if not y_fn:
-                y_fn = model.fn(i)
+                # The `Deterministic` should be the mean parameter of the
+                # observed distribution
+                if var != obs_mu:
+                    continue
 
             if dense_inputs:
-                X_fn = model.fn(mu.owner.inputs[1].T)
+                X_fn = model.fn(eta.owner.inputs[1].T)
             else:
-                X_fn = model.fn(mu.owner.inputs[0])
+                X_fn = model.fn(eta.owner.inputs[0])
 
-        if not (X_fn and y_fn):
-            raise RuntimeError(
-                f"Cannot find Design matrix or dependent variable assoicate with {beta}"
+        if not (X_fn and y_X_fn):
+            raise NotImplementedError(
+                f"Cannot find a design matrix or dependent variable associated with {beta}"  # noqa: E501
             )
 
         self.vars = [beta]
 
         M = model.test_point[beta.name].shape[-1]
 
+        # if observation dist is normal then y_aug_fn = y_fn when it is NB
+        # then, hs_regression_model, dispatch i.distribution...
+
         self.vi = np.full(M, 1)
         self.lambda2 = np.full(M, 1)
         self.beta = np.full(M, 1)
         self.tau2 = 1
         self.xi = 1
-        self.y_fn = y_fn
+        self.y_X_fn = y_X_fn
         self.X_fn = X_fn
 
     def step(self, point):
-        # breakpoint()
-        y = self.y_fn(point)
         X = self.X_fn(point)
-
+        y, X = self.y_X_fn(point, X)
         self.beta, self.lambda2, self.tau2, self.vi, self.xi = hs_step(
             self.lambda2, self.tau2, self.vi, self.xi, X, y
         )

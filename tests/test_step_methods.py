@@ -398,61 +398,99 @@ def test_hs_step():
     assert (np.abs(beta - beta_true) / beta_true).mean() < 0.5
 
 
-def test_Hsstep():
+def test_HSStep_Normal():
     np.random.seed(2032)
     M = 5
     N = 50
     X = np.random.normal(size=N * M).reshape((N, M))
-    beta_true = np.random.normal(size=M)
+    beta_true = np.random.normal(10, size=M)
     y = np.random.normal(X.dot(beta_true), 1)
 
-    M = X.shape[1]
     with pm.Model():
         beta = HorseShoe("beta", tau=1, shape=M)
         pm.Normal("y", mu=beta.dot(X.T), sigma=1, observed=y)
         hsstep = HSStep([beta])
         trace = pm.sample(
-            draws=50, tune=0, step=hsstep, chains=1, return_inferencedata=True
+            draws=50,
+            tune=0,
+            step=hsstep,
+            chains=1,
+            return_inferencedata=True,
+            compute_convergence_checks=False,
         )
 
     beta_samples = trace.posterior["beta"][0].values
-
     assert beta_samples.shape == (50, M)
     np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.3)
 
+
+def test_HSStep_Normal_Deterministic():
+    np.random.seed(2032)
+    M = 5
+    N = 50
+    X = np.random.normal(size=N * M).reshape((N, M))
+    beta_true = np.random.normal(10, size=M)
+    y = np.random.normal(X.dot(beta_true), 1)
+
     with pm.Model():
         beta = HorseShoe("beta", tau=1, shape=M)
+        # Make `mu` a `Deterministic`
         mu = pm.Deterministic("mu", beta.dot(X.T))
         pm.Normal("y", mu=mu, sigma=1, observed=y)
         hsstep = HSStep([beta])
         trace = pm.sample(
-            draws=50, tune=0, step=hsstep, chains=1, return_inferencedata=True
+            draws=50,
+            tune=0,
+            step=hsstep,
+            chains=1,
+            return_inferencedata=True,
+            compute_convergence_checks=False,
         )
 
     beta_samples = trace.posterior["beta"][0].values
     assert beta_samples.shape == (50, M)
     np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.3)
+
+
+def test_HSStep_unsupported():
+    np.random.seed(2032)
+    M = 5
+    N = 50
+    X = np.random.normal(size=N * M).reshape((N, M))
+    beta_true = np.random.normal(10, size=M)
+    y = np.random.normal(X.dot(beta_true), 1)
 
     with pm.Model():
         beta = HorseShoe("beta", tau=1, shape=M)
         pm.TruncatedNormal("alpha", mu=beta.dot(X.T), sigma=1, observed=y)
 
-        with pytest.raises(RuntimeError):
-            hsstep = HSStep([beta])
+        with pytest.raises(NotImplementedError):
+            HSStep([beta])
 
     with pm.Model():
         beta = HorseShoe("beta", tau=1, shape=M)
         mu = pm.Deterministic("mu", beta.dot(X.T))
         pm.TruncatedNormal("y", mu=mu, sigma=1, observed=y)
-        hsstep = HSStep([beta])
-        trace = pm.sample(
-            draws=50, tune=0, step=hsstep, chains=1, return_inferencedata=True
-        )
 
-    beta_samples = trace.posterior["beta"][0].values
-    assert beta_samples.shape == (50, M)
+        with pytest.raises(NotImplementedError):
+            HSStep([beta])
 
-    # test case for sparse matrix
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M)
+        mu = pm.Deterministic("mu", beta.dot(X.T))
+        pm.Normal("y", mu=mu, sigma=1, observed=y)
+        beta_2 = HorseShoe("beta_2", tau=1, shape=M)
+        with pytest.raises(ValueError):
+            HSStep([beta, beta_2])
+
+
+def test_HSStep_sparse():
+    np.random.seed(2032)
+    M = 5
+    N = 50
+    X = np.random.normal(size=N * M).reshape((N, M))
+    beta_true = np.random.normal(10, size=M)
+    y = np.random.normal(X.dot(beta_true), 1)
     X = sp.sparse.csr_matrix(X)
 
     M = X.shape[1]
@@ -461,13 +499,93 @@ def test_Hsstep():
         pm.Normal("y", mu=sp_dot(X, at.shape_padright(beta)), sigma=1, observed=y)
         hsstep = HSStep([beta])
         trace = pm.sample(
-            draws=50, tune=0, step=hsstep, chains=1, return_inferencedata=True
+            draws=50,
+            tune=0,
+            step=hsstep,
+            chains=1,
+            return_inferencedata=True,
+            compute_convergence_checks=False,
         )
-        beta_2 = HorseShoe("beta_2", tau=1, shape=M)
-        with pytest.raises(ValueError):
-            HSStep([beta, beta_2])
 
     beta_samples = trace.posterior["beta"][0].values
-
     assert beta_samples.shape == (50, M)
     np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.3)
+
+
+def test_HSStep_NegativeBinomial():
+    np.random.seed(2032)
+    M = 5
+    N = 50
+    X = np.random.normal(size=N * M).reshape((N, M))
+    beta_true = np.array([1, 1, 2, 2, 0])
+    y_nb = pm.NegativeBinomial.dist(np.exp(X.dot(beta_true)), 1).random()
+
+    N_draws = 500
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M)
+        pm.NegativeBinomial("y", mu=at.exp(beta.dot(X.T)), alpha=1, observed=y_nb)
+        hsstep = HSStep([beta])
+        trace = pm.sample(
+            draws=N_draws,
+            step=hsstep,
+            chains=1,
+            return_inferencedata=True,
+            compute_convergence_checks=False,
+        )
+
+    beta_samples = trace.posterior["beta"][0].values
+    assert beta_samples.shape == (N_draws, M)
+    np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.5)
+
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M, testval=beta_true * 0.1)
+        pm.NegativeBinomial("y", mu=beta.dot(np.abs(X.T)), alpha=1, observed=y_nb)
+        hsstep = HSStep([beta])
+        trace = pm.sample(
+            draws=N_draws,
+            step=hsstep,
+            chains=1,
+            return_inferencedata=True,
+            compute_convergence_checks=False,
+        )
+
+    beta_samples = trace.posterior["beta"][0].values
+    assert beta_samples.shape == (N_draws, M)
+
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M, testval=beta_true * 0.1)
+        eta = pm.NegativeBinomial("eta", mu=beta.dot(X.T), alpha=1, shape=N)
+        pm.Normal("y", mu=at.exp(eta), sigma=1, observed=y_nb)
+
+        with pytest.raises(NotImplementedError):
+            HSStep([beta])
+
+
+def test_HSStep_NegativeBinomial_sparse():
+    np.random.seed(2032)
+    M = 5
+    N = 50
+    X = np.random.normal(size=N * M).reshape((N, M))
+    beta_true = np.array([1, 1, 2, 2, 0])
+    y_nb = pm.NegativeBinomial.dist(np.exp(X.dot(beta_true)), 1).random()
+
+    X = sp.sparse.csr_matrix(X)
+
+    N_draws = 500
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M)
+        pm.NegativeBinomial(
+            "y", mu=at.exp(sp_dot(X, at.shape_padright(beta))), alpha=1, observed=y_nb
+        )
+        hsstep = HSStep([beta])
+        trace = pm.sample(
+            draws=N_draws,
+            step=hsstep,
+            chains=1,
+            return_inferencedata=True,
+            compute_convergence_checks=False,
+        )
+
+    beta_samples = trace.posterior["beta"][0].values
+    assert beta_samples.shape == (N_draws, M)
+    np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.5)
