@@ -4,16 +4,19 @@ import numpy as np
 
 try:
     import aesara.tensor as at
+    from aesara import shared
     from aesara.graph.op import get_test_value
     from aesara.sparse import structured_dot as sp_dot
 except ImportError:
     import theano.tensor as at
     from theano.graph.op import get_test_value
     from theano.sparse import structured_dot as sp_dot
+    from theano import shared
 
 import pymc3 as pm
 import pytest
 import scipy as sp
+from pymc3.exceptions import SamplingError
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, HorseShoe, PoissonZeroProcess
 from pymc3_hmm.step_methods import (
@@ -449,7 +452,7 @@ def test_HSStep_Normal_Deterministic():
 
     beta_samples = trace.posterior["beta"][0].values
     assert beta_samples.shape == (50, M)
-    np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.3)
+    np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.5)
 
 
 def test_HSStep_unsupported():
@@ -557,8 +560,15 @@ def test_HSStep_NegativeBinomial():
         eta = pm.NegativeBinomial("eta", mu=beta.dot(X.T), alpha=1, shape=N)
         pm.Normal("y", mu=at.exp(eta), sigma=1, observed=y_nb)
 
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(SamplingError):
             HSStep([beta])
+            pm.sample(
+                draws=N_draws,
+                step=hsstep,
+                chains=1,
+                return_inferencedata=True,
+                compute_convergence_checks=False,
+            )
 
 
 def test_HSStep_NegativeBinomial_sparse():
@@ -576,6 +586,42 @@ def test_HSStep_NegativeBinomial_sparse():
         beta = HorseShoe("beta", tau=1, shape=M)
         pm.NegativeBinomial(
             "y", mu=at.exp(sp_dot(X, at.shape_padright(beta))), alpha=1, observed=y_nb
+        )
+        hsstep = HSStep([beta])
+        trace = pm.sample(
+            draws=N_draws,
+            step=hsstep,
+            chains=1,
+            return_inferencedata=True,
+            compute_convergence_checks=False,
+        )
+
+    beta_samples = trace.posterior["beta"][0].values
+    assert beta_samples.shape == (N_draws, M)
+    np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.5)
+
+
+def test_HSStep_NegativeBinomial_sparse_shared_y():
+    np.random.seed(2032)
+    M = 5
+    N = 50
+    X = np.random.normal(size=N * M).reshape((N, M))
+    beta_true = np.array([1, 1, 2, 2, 0])
+    y_nb = pm.NegativeBinomial.dist(np.exp(X.dot(beta_true)), 1).random()
+
+    X = sp.sparse.csr_matrix(X)
+
+    X_tt = shared(X, name="X", borrow=True)
+    y_tt = shared(y_nb, name="y_t", borrow=True)
+
+    N_draws = 100
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M)
+        pm.NegativeBinomial(
+            "y",
+            mu=at.exp(sp_dot(X_tt, at.shape_padright(beta))),
+            alpha=1,
+            observed=y_tt,
         )
         hsstep = HSStep([beta])
         trace = pm.sample(
