@@ -546,9 +546,11 @@ def hs_regression_model_Normal(dist, rv, model):
     mu = dist.mu
     y_X_fn = None
     if hasattr(rv, "observations"):
+        obs = at.as_tensor_variable(rv.observations)
+        obs_fn = model.fn(obs)
 
         def y_X_fn(points, X):
-            return rv.observations, X
+            return obs_fn(points), X
 
     return y_X_fn, mu
 
@@ -567,13 +569,18 @@ def hs_regression_model_NegativeBinomial(dist, rv, model):
     if hasattr(rv, "observations"):
         from polyagamma import random_polyagamma
 
-        # pm.model.fn.signiturw
+        obs = at.as_tensor_variable(rv.observations)
         h_z_alpha_fn = model.fn(
-            [alpha + rv.observations, eta.squeeze() - at.log(alpha), alpha]
+            [
+                alpha + obs,
+                eta.squeeze() - at.log(alpha),
+                alpha,
+                obs,
+            ]
         )
 
         def y_X_fn(points, X):
-            h, z, alpha = h_z_alpha_fn(points)
+            h, z, alpha, obs = h_z_alpha_fn(points)
 
             omega = random_polyagamma(h, z)
 
@@ -586,13 +593,35 @@ def hs_regression_model_NegativeBinomial(dist, rv, model):
             else:
                 Phi = (X.T * np.sqrt(V_diag_inv)).T
 
-            y_aug = np.log(alpha) + (rv.observations - alpha) / (2.0 * omega)
+            y_aug = np.log(alpha) + (obs - alpha) / (2.0 * omega)
             y_aug = (y_aug / sigma).astype(config.floatX)
             return y_aug, Phi
 
         return y_X_fn, eta
 
     return None, eta
+
+
+def find_dot(node, beta, model, y_fn):
+    if not node.owner:
+        return
+    # dense dot
+    if isinstance(node.owner.op, Dot):
+        if beta in node.owner.inputs:
+            X_fn = model.fn(node.owner.inputs[1].T)
+        return node, X_fn, y_fn
+    # sprase dot
+    if isinstance(node.owner.op, StructuredDot):
+        if beta in node.owner.inputs[1].owner.inputs:
+            X_fn = model.fn(node.owner.inputs[0])
+            return node, X_fn, y_fn
+    else:
+        # if exp transformation
+        if isinstance(node.owner.op, at.elemwise.Elemwise):
+            res = find_dot(node.owner.inputs[0], beta, model, y_fn)
+            if res:
+                node, X_fn, _ = res
+                return node, X_fn, y_fn
 
 
 class HSStep(BlockedStep):
@@ -625,15 +654,13 @@ class HSStep(BlockedStep):
                     continue
             elif isinstance(var, pm.model.DeterministicWrapper):
                 eta = var.owner.inputs[0]
-
-            dense_dot = eta.owner and isinstance(eta.owner.op, Dot)
-            sparse_dot = eta.owner and isinstance(eta.owner.op, StructuredDot)
-
-            dense_inputs = dense_dot and beta in eta.owner.inputs
-            sparse_inputs = sparse_dot and beta in eta.owner.inputs[1].owner.inputs
-
-            if not (dense_inputs or sparse_inputs):
-                continue
+            if eta.owner:
+                eta_X_fn = find_dot(eta, beta, model, y_X_fn)
+                if not eta_X_fn:
+                    continue
+                eta, X_fn, y_X_fn = eta_X_fn
+            else:
+                continue  # pragma: no cover
 
             if not y_X_fn:
                 # We don't have the observation distribution, so we need to
@@ -656,11 +683,6 @@ class HSStep(BlockedStep):
                 if var != obs_mu:
                     continue
 
-            if dense_inputs:
-                X_fn = model.fn(eta.owner.inputs[1].T)
-            else:
-                X_fn = model.fn(eta.owner.inputs[0])
-
         if not (X_fn and y_X_fn):
             raise NotImplementedError(
                 f"Cannot find a design matrix or dependent variable associated with {beta}"  # noqa: E501
@@ -672,7 +694,6 @@ class HSStep(BlockedStep):
 
         # if observation dist is normal then y_aug_fn = y_fn when it is NB
         # then, hs_regression_model, dispatch i.distribution...
-
         self.vi = np.full(M, 1)
         self.lambda2 = np.full(M, 1)
         self.beta = np.full(M, 1)
