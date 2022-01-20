@@ -1,7 +1,5 @@
 from typing import Any, Callable, Dict, List, Optional, Sequence, Text, Tuple, Union
 
-import datashader as ds
-import datashader.transfer_functions as tf
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -20,6 +18,12 @@ except ImportError:  # pragma: no cover
     from theano.tensor.extra_ops import broadcast_shape
     from theano.tensor.extra_ops import broadcast_to as at_broadcast_to
     from theano.tensor.var import TensorVariable
+
+try:  # pragma: no cover
+    import datashader as ds
+    import datashader.transfer_functions as tf
+except ImportError:  # pragma: no cover
+    pass
 
 
 vsearchsorted = np.vectorize(np.searchsorted, otypes=[int], signature="(n),()->()")
