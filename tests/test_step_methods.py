@@ -635,3 +635,36 @@ def test_HSStep_NegativeBinomial_sparse_shared_y():
     beta_samples = trace.posterior["beta"][0].values
     assert beta_samples.shape == (N_draws, M)
     np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.5)
+
+
+def test_NB_w_alpha_as_var():
+    np.random.seed(2032)
+    M = 5
+    N = 50
+    X = np.random.normal(size=N * M).reshape((N, M))
+    X[:, 0] = 1
+    beta_true = np.array([5, 1, 0, 1, 0])
+    true_alpha = 100
+    y_nb = pm.NegativeBinomial.dist(np.exp(X.dot(beta_true)), true_alpha).random()
+
+    N_draws = 500
+    with pm.Model():
+        beta = HorseShoe("beta", tau=1, shape=M)
+        alpha = pm.Normal("alpha", mu=100, sd=50)
+        pm.NegativeBinomial("y", mu=at.exp(beta.dot(X.T)), alpha=alpha, observed=y_nb)
+        step = [HSStep([beta]), pm.NUTS(alpha)]
+        trace = pm.sample(
+            draws=N_draws,
+            step=step,
+            chains=1,
+            return_inferencedata=True,
+            compute_convergence_checks=False,
+        )
+
+    beta_samples = trace.posterior["beta"][0].values
+    assert beta_samples.shape == (N_draws, M)
+    np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.5)
+    assert (
+        np.abs(trace.posterior.alpha.values[0].mean(0) - true_alpha) / true_alpha < 0.1
+    )
+    breakpoint()
