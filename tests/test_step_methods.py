@@ -1,22 +1,14 @@
 import warnings
 
 import numpy as np
-
-try:
-    import aesara.tensor as at
-    from aesara import shared
-    from aesara.graph.op import get_test_value
-    from aesara.sparse import structured_dot as sp_dot
-except ImportError:
-    import theano.tensor as at
-    from theano.graph.op import get_test_value
-    from theano.sparse import structured_dot as sp_dot
-    from theano import shared
-
 import pymc3 as pm
 import pytest
 import scipy as sp
+import theano.tensor as tt
 from pymc3.exceptions import SamplingError
+from theano import shared
+from theano.graph.op import get_test_value
+from theano.sparse import structured_dot as sp_dot
 
 from pymc3_hmm.distributions import DiscreteMarkovChain, HorseShoe, PoissonZeroProcess
 from pymc3_hmm.step_methods import (
@@ -143,8 +135,8 @@ def test_FFBSStep():
         p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
-        P_tt = at.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
+        P_tt = tt.stack([p_0_rv, p_1_rv])
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
 
         pi_0_tt = compute_steady_state(P_rv)
 
@@ -177,8 +169,8 @@ def test_FFBSStep_extreme():
         p_0_rv = poiszero_sim["p_0"]
         p_1_rv = poiszero_sim["p_1"]
 
-        P_tt = at.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
+        P_tt = tt.stack([p_0_rv, p_1_rv])
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
 
         pi_0_tt = poiszero_sim["pi_0"]
 
@@ -241,8 +233,8 @@ def test_TransMatConjugateStep():
         p_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         p_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
-        P_tt = at.stack([p_0_rv, p_1_rv])
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
+        P_tt = tt.stack([p_0_rv, p_1_rv])
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
 
         pi_0_tt = compute_steady_state(P_rv)
 
@@ -284,14 +276,14 @@ def test_TransMatConjugateStep_subtensors():
         d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
-        p_0_rv = at.as_tensor([0, 0, 1])
-        p_1_rv = at.zeros(3)
-        p_1_rv = at.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
-        p_2_rv = at.zeros(3)
-        p_2_rv = at.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
+        p_0_rv = tt.as_tensor([0, 0, 1])
+        p_1_rv = tt.zeros(3)
+        p_1_rv = tt.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
+        p_2_rv = tt.zeros(3)
+        p_2_rv = tt.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
 
-        P_tt = at.stack([p_0_rv, p_1_rv, p_2_rv])
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt))
+        P_tt = tt.stack([p_0_rv, p_1_rv, p_2_rv])
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt))
         DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
 
         transmat = TransMatConjugateStep(P_rv)
@@ -308,16 +300,16 @@ def test_TransMatConjugateStep_subtensors():
         d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
-        p_0_rv = at.as_tensor([0, 0, 1])
-        p_1_rv = at.zeros(3)
-        p_1_rv = at.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
-        p_2_rv = at.zeros(3)
-        p_2_rv = at.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
+        p_0_rv = tt.as_tensor([0, 0, 1])
+        p_1_rv = tt.zeros(3)
+        p_1_rv = tt.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
+        p_2_rv = tt.zeros(3)
+        p_2_rv = tt.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
 
-        P_tt = at.horizontal_stack(
+        P_tt = tt.horizontal_stack(
             p_0_rv[..., None], p_1_rv[..., None], p_2_rv[..., None]
         )
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt.T))
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt.T))
         DiscreteMarkovChain("S_t", P_rv, np.r_[1, 0, 0], shape=(10,))
 
         transmat = TransMatConjugateStep(P_rv)
@@ -334,16 +326,16 @@ def test_TransMatConjugateStep_subtensors():
         d_0_rv = pm.Dirichlet("p_0", np.r_[1, 1], shape=2)
         d_1_rv = pm.Dirichlet("p_1", np.r_[1, 1], shape=2)
 
-        p_0_rv = at.as_tensor([0, 0, 1])
-        p_1_rv = at.zeros(3)
-        p_1_rv = at.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
-        p_2_rv = at.zeros(3)
-        p_2_rv = at.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
+        p_0_rv = tt.as_tensor([0, 0, 1])
+        p_1_rv = tt.zeros(3)
+        p_1_rv = tt.set_subtensor(p_0_rv[[0, 2]], d_0_rv)
+        p_2_rv = tt.zeros(3)
+        p_2_rv = tt.set_subtensor(p_1_rv[[1, 2]], d_1_rv)
 
-        P_tt = at.horizontal_stack(
+        P_tt = tt.horizontal_stack(
             p_0_rv[..., None], p_1_rv[..., None], p_2_rv[..., None]
         )
-        P_rv = pm.Deterministic("P_tt", at.shape_padleft(P_tt.T))
+        P_rv = pm.Deterministic("P_tt", tt.shape_padleft(P_tt.T))
         DiscreteMarkovChain(
             "S_t", P_rv, np.r_[1, 0, 0], shape=(4,), observed=np.r_[0, 1, 0, 2]
         )
@@ -499,7 +491,7 @@ def test_HSStep_sparse():
     M = X.shape[1]
     with pm.Model():
         beta = HorseShoe("beta", tau=1, shape=M)
-        pm.Normal("y", mu=sp_dot(X, at.shape_padright(beta)), sigma=1, observed=y)
+        pm.Normal("y", mu=sp_dot(X, tt.shape_padright(beta)), sigma=1, observed=y)
         hsstep = HSStep([beta])
         trace = pm.sample(
             draws=50,
@@ -526,7 +518,7 @@ def test_HSStep_NegativeBinomial():
     N_draws = 500
     with pm.Model():
         beta = HorseShoe("beta", tau=1, shape=M)
-        pm.NegativeBinomial("y", mu=at.exp(beta.dot(X.T)), alpha=1, observed=y_nb)
+        pm.NegativeBinomial("y", mu=tt.exp(beta.dot(X.T)), alpha=1, observed=y_nb)
         hsstep = HSStep([beta])
         trace = pm.sample(
             draws=N_draws,
@@ -558,7 +550,7 @@ def test_HSStep_NegativeBinomial():
     with pm.Model():
         beta = HorseShoe("beta", tau=1, shape=M, testval=beta_true * 0.1)
         eta = pm.NegativeBinomial("eta", mu=beta.dot(X.T), alpha=1, shape=N)
-        pm.Normal("y", mu=at.exp(eta), sigma=1, observed=y_nb)
+        pm.Normal("y", mu=tt.exp(eta), sigma=1, observed=y_nb)
 
         with pytest.raises(SamplingError):
             HSStep([beta])
@@ -585,7 +577,7 @@ def test_HSStep_NegativeBinomial_sparse():
     with pm.Model():
         beta = HorseShoe("beta", tau=1, shape=M)
         pm.NegativeBinomial(
-            "y", mu=at.exp(sp_dot(X, at.shape_padright(beta))), alpha=1, observed=y_nb
+            "y", mu=tt.exp(sp_dot(X, tt.shape_padright(beta))), alpha=1, observed=y_nb
         )
         hsstep = HSStep([beta])
         trace = pm.sample(
@@ -619,7 +611,7 @@ def test_HSStep_NegativeBinomial_sparse_shared_y():
         beta = HorseShoe("beta", tau=1, shape=M)
         pm.NegativeBinomial(
             "y",
-            mu=at.exp(sp_dot(X_tt, at.shape_padright(beta))),
+            mu=tt.exp(sp_dot(X_tt, tt.shape_padright(beta))),
             alpha=1,
             observed=y_tt,
         )

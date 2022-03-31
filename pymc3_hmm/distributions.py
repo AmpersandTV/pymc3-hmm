@@ -1,21 +1,9 @@
 import warnings
 
 import numpy as np
-
-try:  # pragma: no cover
-    import aesara
-    import aesara.tensor as at
-    from aesara.graph.op import get_test_value
-    from aesara.scalar import upcast
-    from aesara.tensor.extra_ops import broadcast_to as at_broadcast_to
-except ImportError:  # pragma: no cover
-    import theano as aesara
-    import theano.tensor as at
-    from theano.graph.op import get_test_value
-    from theano.scalar import upcast
-    from theano.tensor.extra_ops import broadcast_to as at_broadcast_to
-
 import pymc3 as pm
+import theano
+import theano.tensor as tt
 from pymc3.distributions.distribution import (
     Distribution,
     _DrawValuesContext,
@@ -23,6 +11,9 @@ from pymc3.distributions.distribution import (
     generate_samples,
 )
 from pymc3.distributions.mixture import _conversion_map, all_discrete
+from theano.graph.op import get_test_value
+from theano.scalar import upcast
+from theano.tensor.extra_ops import broadcast_to as tt_broadcast_to
 
 from pymc3_hmm.utils import tt_broadcast_arrays, vsearchsorted
 
@@ -62,7 +53,7 @@ def distribution_subset_args(dist, shape, idx):
     res = dict()
     for param in dist_param_names:
 
-        bcast_res = at_broadcast_to(getattr(dist, param), shape)
+        bcast_res = tt_broadcast_to(getattr(dist, param), shape)
 
         res[param] = bcast_res[idx]
 
@@ -110,7 +101,7 @@ class SwitchingProcess(Distribution):
             equal to the size of `comp_dists`.
 
         """
-        self.states = at.as_tensor_variable(pm.intX(states))
+        self.states = tt.as_tensor_variable(pm.intX(states))
 
         if len(comp_dists) > 31:
             warnings.warn(
@@ -136,7 +127,7 @@ class SwitchingProcess(Distribution):
                 bcast_means = tt_broadcast_arrays(
                     *([self.states] + [d.mean.astype(dtype) for d in self.comp_dists])
                 )
-                self.mean = at.choose(self.states, bcast_means[1:])
+                self.mean = tt.choose(self.states, bcast_means[1:])
 
                 if "mean" not in defaults:
                     defaults.append("mean")
@@ -148,7 +139,7 @@ class SwitchingProcess(Distribution):
             bcast_modes = tt_broadcast_arrays(
                 *([self.states] + [d.mode.astype(dtype) for d in self.comp_dists])
             )
-            self.mode = at.choose(self.states, bcast_modes[1:])
+            self.mode = tt.choose(self.states, bcast_modes[1:])
 
             if "mode" not in defaults:
                 defaults.append("mode")
@@ -161,16 +152,16 @@ class SwitchingProcess(Distribution):
     def logp(self, obs):
         """Return the Theano log-likelihood at a point."""
 
-        obs_tt = at.as_tensor_variable(obs)
+        obs_tt = tt.as_tensor_variable(obs)
 
-        logp_val = at.alloc(-np.inf, *obs.shape)
+        logp_val = tt.alloc(-np.inf, *obs.shape)
 
         for i, dist in enumerate(self.comp_dists):
-            i_mask = at.eq(self.states, i)
+            i_mask = tt.eq(self.states, i)
             obs_i = obs_tt[i_mask]
             subset_dist_kwargs = distribution_subset_args(dist, obs.shape, i_mask)
             subset_dist = dist.dist(**subset_dist_kwargs)
-            logp_val = at.set_subtensor(logp_val[i_mask], subset_dist.logp(obs_i))
+            logp_val = tt.set_subtensor(logp_val[i_mask], subset_dist.logp(obs_i))
 
         return logp_val
 
@@ -255,8 +246,8 @@ class PoissonZeroProcess(SwitchingProcess):
             A vector of integer 0-1 states that indicate which component of
             the mixture is active at each point/time.
         """
-        self.mu = at.as_tensor_variable(pm.floatX(mu))
-        self.states = at.as_tensor_variable(states)
+        self.mu = tt.as_tensor_variable(pm.floatX(mu))
+        self.states = tt.as_tensor_variable(states)
 
         super().__init__(
             [Constant.dist(np.array(0, dtype=np.int64)), pm.Poisson.dist(mu)],
@@ -292,15 +283,15 @@ class DiscreteMarkovChain(pm.Discrete):
             Shape of the state sequence.  The last dimension is `N`, i.e. the
             length of the state sequence(s).
         """
-        self.gamma_0 = at.as_tensor_variable(pm.floatX(gamma_0))
+        self.gamma_0 = tt.as_tensor_variable(pm.floatX(gamma_0))
 
         assert Gammas.ndim >= 3
 
-        self.Gammas = at.as_tensor_variable(pm.floatX(Gammas))
+        self.Gammas = tt.as_tensor_variable(pm.floatX(Gammas))
 
         shape = np.atleast_1d(shape)
 
-        dtype = _conversion_map[aesara.config.floatX]
+        dtype = _conversion_map[theano.config.floatX]
         self.mode = np.zeros(tuple(shape), dtype=dtype)
 
         super().__init__(shape=shape, **kwargs)
@@ -324,23 +315,23 @@ class DiscreteMarkovChain(pm.Discrete):
 
         """  # noqa: E501
 
-        states_tt = at.as_tensor(states)
+        states_tt = tt.as_tensor(states)
 
         if states.ndim > 1 or self.Gammas.ndim > 3 or self.gamma_0.ndim > 1:
             raise NotImplementedError("Broadcasting not supported.")
 
-        Gammas_tt = at_broadcast_to(
+        Gammas_tt = tt_broadcast_to(
             self.Gammas, (states.shape[0],) + tuple(self.Gammas.shape)[-2:]
         )
         gamma_0_tt = self.gamma_0
 
         Gamma_1_tt = Gammas_tt[0]
-        P_S_1_tt = at.dot(gamma_0_tt, Gamma_1_tt)[states_tt[0]]
+        P_S_1_tt = tt.dot(gamma_0_tt, Gamma_1_tt)[states_tt[0]]
 
         # def S_logp_fn(S_tm1, S_t, Gamma):
-        #     return at.log(Gamma[..., S_tm1, S_t])
+        #     return tt.log(Gamma[..., S_tm1, S_t])
         #
-        # P_S_2T_tt, _ = aesara.scan(
+        # P_S_2T_tt, _ = theano.scan(
         #     S_logp_fn,
         #     sequences=[
         #         {
@@ -350,10 +341,10 @@ class DiscreteMarkovChain(pm.Discrete):
         #         Gammas_tt,
         #     ],
         # )
-        P_S_2T_tt = Gammas_tt[at.arange(1, states.shape[0]), states[:-1], states[1:]]
+        P_S_2T_tt = Gammas_tt[tt.arange(1, states.shape[0]), states[:-1], states[1:]]
 
-        log_P_S_1T_tt = at.concatenate(
-            [at.shape_padright(at.log(P_S_1_tt)), at.log(P_S_2T_tt)]
+        log_P_S_1T_tt = tt.concatenate(
+            [tt.shape_padright(tt.log(P_S_1_tt)), tt.log(P_S_2T_tt)]
         )
 
         res = log_P_S_1T_tt.sum()
@@ -424,7 +415,7 @@ class Constant(Distribution):
 
     def __init__(self, c, shape=(), defaults=("mode",), **kwargs):
 
-        c = at.as_tensor_variable(c)
+        c = tt.as_tensor_variable(c)
 
         dtype = c.dtype
 
@@ -448,7 +439,7 @@ class Constant(Distribution):
         )
 
     def logp(self, value):
-        return at.switch(at.eq(value, self.c), 0.0, -np.inf)
+        return tt.switch(tt.eq(value, self.c), 0.0, -np.inf)
 
     def _distr_parameters_for_repr(self):
         return ["c"]
