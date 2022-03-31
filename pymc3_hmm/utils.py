@@ -3,21 +3,14 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Text, Tuple, U
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import theano.tensor as tt
 from matplotlib import cm
 from matplotlib.axes import Axes
 from matplotlib.colors import Colormap
 from scipy.special import logsumexp
-
-try:  # pragma: no cover
-    import aesara.tensor as at
-    from aesara.tensor.extra_ops import broadcast_shape
-    from aesara.tensor.extra_ops import broadcast_to as at_broadcast_to
-    from aesara.tensor.var import TensorVariable
-except ImportError:  # pragma: no cover
-    import theano.tensor as at
-    from theano.tensor.extra_ops import broadcast_shape
-    from theano.tensor.extra_ops import broadcast_to as at_broadcast_to
-    from theano.tensor.var import TensorVariable
+from theano.tensor.extra_ops import broadcast_shape
+from theano.tensor.extra_ops import broadcast_to as tt_broadcast_to
+from theano.tensor.var import TensorVariable
 
 try:  # pragma: no cover
     import datashader as ds
@@ -44,8 +37,8 @@ def compute_steady_state(P):
 
     P = P[0]
     N_states = P.shape[-1]
-    Lam = (at.eye(N_states) - P + at.ones((N_states, N_states))).T
-    u = at.slinalg.solve(Lam, at.ones((N_states,)))
+    Lam = (tt.eye(N_states) - P + tt.ones((N_states, N_states))).T
+    u = tt.slinalg.solve(Lam, tt.ones((N_states,)))
     return u
 
 
@@ -95,15 +88,15 @@ def compute_trans_freqs(states, N_states, counts_only=False):
 
 def tt_logsumexp(x, axis=None, keepdims=False):
     """Construct a Theano graph for a log-sum-exp calculation."""
-    x_max_ = at.max(x, axis=axis, keepdims=True)
+    x_max_ = tt.max(x, axis=axis, keepdims=True)
 
     if x_max_.ndim > 0:
-        x_max_ = at.set_subtensor(x_max_[at.isinf(x_max_)], 0.0)
-    elif at.isinf(x_max_):
-        x_max_ = at.as_tensor(0.0)
+        x_max_ = tt.set_subtensor(x_max_[tt.isinf(x_max_)], 0.0)
+    elif tt.isinf(x_max_):
+        x_max_ = tt.as_tensor(0.0)
 
-    res = at.sum(at.exp(x - x_max_), axis=axis, keepdims=keepdims)
-    res = at.log(res)
+    res = tt.sum(tt.exp(x - x_max_), axis=axis, keepdims=keepdims)
+    res = tt.log(res)
 
     if not keepdims:
         # SciPy uses the `axis` keyword here, but Theano doesn't support that.
@@ -193,7 +186,7 @@ def tt_broadcast_arrays(*args: TensorVariable):
 
     """
     bcast_shape = broadcast_shape(*args)
-    return tuple(at_broadcast_to(a, bcast_shape) for a in args)
+    return tuple(tt_broadcast_to(a, bcast_shape) for a in args)
 
 
 def multilogit_inv(ys):
@@ -216,7 +209,7 @@ def multilogit_inv(ys):
         lib = np
         lib_logsumexp = logsumexp
     else:
-        lib = at
+        lib = tt
         lib_logsumexp = tt_logsumexp
 
     # exp_ys = lib.exp(ys)
