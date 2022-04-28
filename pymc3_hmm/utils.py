@@ -472,6 +472,12 @@ def plot_split_timeseries_histograms(
         **split_ts_kwargs,
     )
 
+    if (
+        "twin_column_name" in split_ts_kwargs
+        and split_ts_kwargs["twin_column_name"] is not None
+    ):
+        split_ts_kwargs["twin_column_name"] = None
+
     _ = plot_split_timeseries(
         plot_data[sample_col],
         axes_split_data=axes_split_data,
