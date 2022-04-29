@@ -593,6 +593,7 @@ def test_HSStep_NegativeBinomial_sparse():
     np.testing.assert_allclose(beta_samples.mean(0), beta_true, atol=0.5)
 
 
+@pytest.mark.xfail(reason="potentially sensitive to sampling and dependency")
 def test_HSStep_NegativeBinomial_sparse_shared_y():
     np.random.seed(2032)
     M = 5
